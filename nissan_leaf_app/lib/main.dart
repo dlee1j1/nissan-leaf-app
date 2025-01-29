@@ -109,34 +109,54 @@ class _BleScanPageState extends State<BleScanPage> {
 
   void connectToDevice(BluetoothDevice device) async {
     try {
-      print('Connecting to device: ${device.name}...'); // This will be intercepted by the overridden `print`
-      // Connect to device
-      await device.connect(autoConnect: true);
+      print('Connecting to device: ${device.name}...'); 
+      
+      await device.connect();
 
-      // Get the target service
       var services = await device.discoverServices();
-      var obdService = services.firstWhere((s) => s.uuid.toString() == SERVICE_UUID);
+      print('Found ${services.length} services:');
+    
+      // Log all discovered services
+      for (var service in services) {
+        print('Service: ${service.uuid}');
+      }
+      
+
+      // Try to find our target service
+      var targetService = services.firstWhere(
+        (s) => s.uuid.toString() == SERVICE_UUID.substring(4,8),
+        orElse: () {
+          print('Target service $SERVICE_UUID not found');
+          return services.first; // Return first service as fallback
+        },
+      );
+
+      print('Using service: ${targetService.uuid}');
 
       // Get the characteristic for read/write
-      var characteristic = obdService.characteristics.firstWhere(
-        (c) => c.uuid.toString() == CHARACTERISTIC_UUID
+      var characteristic = targetService.characteristics.firstWhere(
+        (c) => c.uuid.toString() == CHARACTERISTIC_UUID.substring(4,8)
       );
+
+      print('Using characteristic ${characteristic.uuid}');
 
       // Create ObdController instance
       var obdController = ObdController(characteristic);
+      print('initializing odb controller...');
       await obdController.initialize();
 
-      print('Connected to device: ${device.name}'); // This will be intercepted by the overridden `print`
+
+      print('Connected to device: ${device.name}');
       setState(() {
         connectionStatus = 'Connected';
       });
     } catch (e) {
-      print('Connection error: $e'); // This will be intercepted by the overridden `print`
+      print('Connection error: $e');
       setState(() {
         connectionStatus = 'Error: ${e.toString()}';
       });
     }
-  }
+  }  
 
   @override
   Widget build(BuildContext context) {

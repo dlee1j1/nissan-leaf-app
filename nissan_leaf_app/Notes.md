@@ -19,3 +19,8 @@
 
   - Update - 10:07PM
     - flutter app now finds the ODB device. Time to start reading data from it.
+
+- 2025-01-29
+  - we have the flutter app showing debugging log in the app
+  - however it seems like we are not actually connecting. Need to check that
+  - Update - 11:26 AM - got it "connected" but ATZ command returns an A instead of OK

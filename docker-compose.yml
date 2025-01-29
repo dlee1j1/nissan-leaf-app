@@ -14,15 +14,16 @@ services:
       - flutter-sdk-cache:/opt/flutter/bin/cache
       - android-tools:/opt/flutter/bin/cache/artifacts/engine
       - android-sdk-linux:/opt/android-sdk-linux
-      - bash-history:/root/.bash_history
-
-    privileged: true
-
+      - bash-history:/commandhistory
+    
     devices:
       - "/dev/bus/usb:/dev/bus/usb" # For physical device debugging
 
     environment:
       - DISPLAY=host.docker.internal:0
+      - HISTFILE=/commandhistory/.bash_history
+      
+    privileged: true
 
     network_mode: "host" 
     tty: true           
