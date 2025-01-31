@@ -44,7 +44,10 @@ class ObdController {
 
       var buffer = '';
       var startTime = DateTime.now();
-    
+
+      // Clear the notification buffer before sending a new command
+      _responseController.add(''); // Clear the stream buffer
+
         // Send the command
       print('Sending command: $command');
       await characteristic.write(utf8.encode(command + '\r'));
