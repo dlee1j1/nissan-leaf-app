@@ -1,5 +1,7 @@
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'dart:convert';
+import 'dart:async';
+import 'dart:typed_data';
 
 class ObdCommandError extends Error {
   final String command;
@@ -13,77 +15,163 @@ class ObdCommandError extends Error {
 
 class ObdController {
   final BluetoothCharacteristic characteristic;
+  final StreamController<String> _responseController = StreamController.broadcast();
   bool _initialized = false;
-  
-  ObdController(this.characteristic); // Constructor
+
+  ObdController(this.characteristic) {
+    _setupNotifications();
+  }
+
+  Future<void> _setupNotifications() async {
+    print('Setting up notifications...');
+    await characteristic.setNotifyValue(true);
+    characteristic.value.listen((value) {
+      var response = utf8.decode(value).replaceAll('\x00', '').trim();
+      print('Received notification: $response');
+      _responseController.add(response);
+    });
+    print('Notifications set up.');
+  }
 
   Future<String> sendCommand(String command, {bool expectOk = false}) async {
-    // utility function to check if a response is "OK"
-    bool _isOk(String response) {
-        if (response.isEmpty) return false;
-        
-        final lines = response.split('\r\n');
-        return lines.length == 1 && lines[0].trim() == 'OK';
-    }
+
+    // Inner function to send the command
+    //  this function sends the command, waits for >, cleans out the > and returns the response
+    //  OK handling and retries are done by the outer function
+    Future<String> _sendCommandInner(String command) async {
+      final ELM_PROMPT = '>';
+      final TIMEOUT = Duration(seconds: 5);
+
+      var buffer = '';
+      var startTime = DateTime.now();
+    
+        // Send the command
+      print('Sending command: $command');
+      await characteristic.write(utf8.encode(command + '\r'));
+
+      // Wait for the response
+      print('Waiting for response...');
+      await for (var chunk in _responseController.stream) {
+        print('Received chunk: $chunk');
+        buffer += chunk;
+        // Debug: Print the buffer content
+        print('Buffer content: $buffer');
+
+        // Clean the buffer and check for the prompt
+        var cleanedBuffer = buffer.replaceAll('\x00', '').trim();
+
+        print('Buffer containes ELM_PROMPT - ${buffer.contains(ELM_PROMPT)}.');
+        print('CleanedBuffer containes ELM_PROMPT - ${cleanedBuffer.contains(ELM_PROMPT)}.');
+        if (cleanedBuffer.contains(ELM_PROMPT)) {
+          break; // Exit the loop if the prompt is found
+        }
+
+        // Check for timeout
+        if (DateTime.now().difference(startTime) > TIMEOUT) {
+          print('Timeout waiting for response to command: $command');
+          throw ObdCommandError(command, 'Timeout waiting for response');
+        }
+      } // End of for loop
+
+      // Clean the response
+      var response = buffer.replaceAll(ELM_PROMPT, '').trim();
+      print('Cleaned response: $response');
+      return response;
+
+    } // End of _sendCommandInner()
 
 
+    // ----
+    // main body of sendCommand() here. Really most of the work is done in _sendCommandInner()
+    // But we do retries and "OK" checking here
+    final RETRY_DELAY = Duration(milliseconds: 100);
+    final MAX_RETRIES = 3;
+  
+    var retryCount = 0;
+    
+    while (true) {
+      // Send the command
+      var response = await _sendCommandInner(command);
 
-    // Ensure initialization before any command
-    if (!_initialized && command != 'ATZ') {
-      await initialize();
-    }
-    await characteristic.write(utf8.encode(command + '\r'));
-    var response = await characteristic.read();
-    var responseStr = utf8.decode(response);
+      // Check for "OK" if required
+      if (!expectOk || response.contains('OK')) {
+        print('Command successful: $command');
+        return response;
+      }
 
-    if (expectOk && !_isOk(responseStr)) {
-      throw ObdCommandError(command, responseStr);
-    }
+      // If we expected "OK" but didn't get it, retry
+      retryCount++;
+      if (retryCount >= MAX_RETRIES) {
+        print('Max retries reached for command: $command');
+        throw ObdCommandError(command, 'Max retries reached');
+      }
 
-    return responseStr;
-  }
+      print('Retrying command: $command (attempt ${retryCount + 1}/$MAX_RETRIES)');
+      await Future.delayed(RETRY_DELAY);
+    } // end loop 
+
+  }  // End of sendCommand()
 
   Future<void> initialize() async {
     if (_initialized) return;
-    
+  
     try {
-      await sendCommand('ATZ', expectOk: true);
+      print('Initializing OBD controller...');
+      await sendCommand('ATZ', expectOk: false);  // ATZ can return junk
       await Future.delayed(Duration(seconds: 1));
-      
-      await sendCommand('ATE0', expectOk: true);
-      await sendCommand('ATSP6');
-      await sendCommand('ATH1');
-      await sendCommand('ATL0');
-      await sendCommand('ATS0');
-      await sendCommand('ATCAF0');
-      await sendCommand('ATAT2');
-      await sendCommand('ATST 08');
-      
+    
+      await sendCommand('ATE0', expectOk: true);  // Echo off
+      await sendCommand('ATSP 6', expectOk: true); // Protocol 6
+      await sendCommand('ATH1', expectOk: true);  // Headers on
+      await sendCommand('ATL0', expectOk: true);  // Linefeeds off
+      await sendCommand('ATS0', expectOk: true);  // Spaces off
+      await sendCommand('ATCAF0', expectOk: true); // CAN formatting off
+      await sendCommand('ATAT2', expectOk: true);  // Timeout setting
+      await sendCommand('ATST 08', expectOk: true); // Another timeout setting
+    
       _initialized = true;
+      print('OBD controller initialized.');
     } catch (e) {
       _initialized = false;
+      print('Initialization failed: $e');
       rethrow;
     }
   }
+/*
+    Future<Map<String, dynamic>> readLBCData() async {
+      print('Reading LBC data...');
 
-  Future<int> readBatterySOC() async {
-    int parseSOCResponse(String response) {
-        final hexStrings = response.split(' ');
-        final values = hexStrings
-            .map((s) => int.parse(s, radix: 16))
-            .toList();
-            
-        if (hexStrings.isEmpty) return 0;
-        final soc = int.parse(hexStrings[0], radix: 16);
-        return soc;
-    }
+      // Step 1: Set the header
+      await sendCommand('ATSH 79B', expectOk: true);
+      print('Header set to 79B');
 
-    // Using the same command as in the Python code
-    var response = await sendCommand('022101');
-    // Parse response and return battery percentage
-    // Implementation needed based on the protocol
-    return parseSOCResponse(response);
-  }
+      // Step 2: Send the LBC command
+      var response = await sendCommand('022101');
+      print('Raw LBC response: $response');
 
-}
+      // Step 3: Decode the response
+      var bytes = utf8.encode(response);
 
+      // Ensure the response is not empty
+      if (bytes.isEmpty) {
+        print('Empty LBC response, returning empty data');
+        return {};
+      }
+
+      // Extract SOC, SOH, and other data (adjust byte ranges as needed)
+      var soc = int.fromBytes(bytes.sublist(33, 37)) / 10000; // SOC in bytes 33-36
+      var soh = int.fromBytes(bytes.sublist(30, 32)) / 102.4; // SOH in bytes 30-32
+      var batteryAh = int.fromBytes(bytes.sublist(37, 40)) / 10000; // Battery capacity in bytes 37-40
+      var hvBatteryVoltage = int.fromBytes(bytes.sublist(20, 22)) / 100; // HV battery voltage in bytes 20-22
+
+      print('Parsed LBC data: SOC=$soc%, SOH=$soh%, BatteryAh=$batteryAh, HVVoltage=$hvBatteryVoltage');
+
+      return {
+        'state_of_charge': soc,
+        'hv_battery_health': soh,
+        'hv_battery_Ah': batteryAh,
+        'hv_battery_voltage': hvBatteryVoltage,
+      };
+    } // End of readLBCData()
+  */    
+} // End of OBDController class

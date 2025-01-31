@@ -14,6 +14,9 @@ linux:  # doesn't work due to issues with bluetooth and X inside the container. 
 android:
 	cd nissan_leaf_app && flutter run -d 09091FDD4007XX 
 
+analyze:
+	cd nissan_leaf_app && flutter analyze | grep -v "info •"
+
 web:
 	cd nissan_leaf_app && flutter run -d web-server --web-hostname=0.0.0.0 --web-port=8080
 
@@ -29,6 +32,7 @@ docker-build: .docker-build-stamp
 
 docker-shell: docker-build
 	powershell.exe -File setup-android-debugging.ps1
+	sleep 2
 	docker-compose up -d &&	docker-compose exec flutter_dev bash
 
 docker-stop:

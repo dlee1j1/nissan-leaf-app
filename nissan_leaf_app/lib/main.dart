@@ -2,13 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'obd_controller.dart';
+import 'obd_command.dart';
 import 'components/log_viewer.dart';
 import 'services/logger.dart'; // Import the Logger service
 import 'dart:async'; // Override the global `print` function
-
+import 'dart:convert';
 
 const SERVICE_UUID = "0000ffe0-0000-1000-8000-00805f9b34fb";
 const CHARACTERISTIC_UUID = "0000ffe1-0000-1000-8000-00805f9b34fb";
+
 
 
 void main() {
@@ -86,7 +88,7 @@ class _BleScanPageState extends State<BleScanPage> {
         setState(() {
           // Update map with latest results, overwriting existing entries
           for (var result in results) {
-            deviceMap[result.device.id.id] = result;
+            deviceMap[result.device.remoteId.id] = result;
           }
         });
       });
@@ -109,7 +111,7 @@ class _BleScanPageState extends State<BleScanPage> {
 
   void connectToDevice(BluetoothDevice device) async {
     try {
-      print('Connecting to device: ${device.name}...'); 
+      print('Connecting to device: ${device.platformName}...'); 
       
       await device.connect();
 
@@ -145,11 +147,27 @@ class _BleScanPageState extends State<BleScanPage> {
       print('initializing odb controller...');
       await obdController.initialize();
 
+      print('Connected to device: ${device.platformName}');
 
-      print('Connected to device: ${device.name}');
+//      int soc = await obdController.readBatterySOC();
+      // Send a command and get the response
+      OBDCommand.setObdController(obdController);
+      var response = await OBDCommand.lbc.send();
+
+
+      print('SOC: ${response['state_of_charge']}%');
+      print('SOH: ${response['hv_battery_health']}%');
+      print('Battery Capacity: ${response['hv_battery_Ah']}Ah');
+      print('HV Battery Voltage: ${response['hv_battery_voltage']}V');
+
+      int soc = response['state_of_charge'];  
+      print('Battery SOC: $soc%');
+ 
       setState(() {
         connectionStatus = 'Connected';
+        batterySOC = soc;
       });
+      
     } catch (e) {
       print('Connection error: $e');
       setState(() {
@@ -157,7 +175,6 @@ class _BleScanPageState extends State<BleScanPage> {
       });
     }
   }  
-
   @override
   Widget build(BuildContext context) {
     // Convert map values to list for ListView
@@ -201,13 +218,13 @@ class _BleScanPageState extends State<BleScanPage> {
               itemBuilder: (context, index) {
                 final device = devices[index];
                 return ListTile(
-                  title: Text(device.device.name.isEmpty
+                  title: Text(device.device.platformName.isEmpty
                       ? 'Unknown Device'
-                      : device.device.name),
+                      : device.device.platformName),
                   subtitle: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('ID: ${device.device.id}'),
+                      Text('ID: ${device.device.remoteId}'),
                       Text('RSSI: ${device.rssi}'),
                       Text('Services: ${device.advertisementData.serviceUuids.join(", ")}'),
                       if (device.advertisementData.manufacturerData.isNotEmpty)

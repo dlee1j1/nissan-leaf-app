@@ -21,6 +21,20 @@
     - flutter app now finds the ODB device. Time to start reading data from it.
 
 - 2025-01-29
+
   - we have the flutter app showing debugging log in the app
   - however it seems like we are not actually connecting. Need to check that
   - Update - 11:26 AM - got it "connected" but ATZ command returns an A instead of OK
+
+- 2025-01-30
+
+  - we have flutter app connected to the car and we have AT commands working
+  - effectively, we have gotten to the OBD BLE device
+  - we now need to be able to send commands to the actual car - i.e., the OBD port itself
+  - Not sure if we should send the bytes as ASCII text or do we push out and read Bytes
+
+- 2025-01-31
+  - big breakthrough last night. figured out the ODB commands.
+  - Turns out you need to send and AT header command followed by the data specification. The code in the reference implementation was just a little opaque
+  - built out the ODB command module
+  - testing this morning has some issue with the ATZ command timing out. I see the > coming back so I don't know why it is not seeing it.
