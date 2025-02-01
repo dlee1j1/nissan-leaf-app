@@ -60,8 +60,9 @@ class ObdController {
       // Wait for the response
       print('Waiting for response...');
 
-      while (buffer.contains(ELM_PROMPT) == false) {
+      while (true) { // while we don't see the ELM_PROMPT
 
+        // Wait for a response  
         while (_responseQueue.isEmpty) {
           // Check for timeout
           if (DateTime.now().difference(startTime) > TIMEOUT) {
@@ -71,19 +72,23 @@ class ObdController {
           await Future.delayed(Duration(milliseconds: 100));
         }
 
+        // Process the response
         while (_responseQueue.isNotEmpty) {
           var chunk = _responseQueue.removeFirst();
           print('Received chunk: $chunk');
+          if (chunk == command) continue; // Skip the command echo
+          if (chunk.contains(ELM_PROMPT)) {
+            buffer += chunk.replaceAll(ELM_PROMPT, '').trim();
+            return buffer;
+          }
           buffer += chunk;
           // Debug: Print the buffer content
           print('Buffer content: $buffer');
         } 
       }  // end of ELM_PROMPT loop
 
-      // Clean the response
-      var response = buffer.replaceAll(ELM_PROMPT, '').trim();
-      print('Cleaned response: $response');
-      return response;
+      // we should never get here
+      throw Exception('BUG BUG BUG - should never get here');
 
     } // End of _sendCommandInner()
 
@@ -94,9 +99,7 @@ class ObdController {
     final RETRY_DELAY = Duration(milliseconds: 100);
     final MAX_RETRIES = 3;
   
-    var retryCount = 0;
-    
-    while (true) {
+    for (var retryCount = 0; retryCount < MAX_RETRIES; retryCount++) {
       // Send the command
       var response = await _sendCommandInner(command);
 
@@ -107,15 +110,12 @@ class ObdController {
       }
 
       // If we expected "OK" but didn't get it, retry
-      retryCount++;
-      if (retryCount >= MAX_RETRIES) {
-        print('Max retries reached for command: $command');
-        throw ObdCommandError(command, 'Max retries reached');
-      }
-
       print('Retrying command: $command (attempt ${retryCount + 1}/$MAX_RETRIES)');
       await Future.delayed(RETRY_DELAY);
-    } // end loop 
+    } // end retry loop 
+
+    print('Max retries reached for command: $command');
+    throw ObdCommandError(command, 'Max retries reached');
 
   }  // End of sendCommand()
 
@@ -128,13 +128,13 @@ class ObdController {
       await Future.delayed(Duration(seconds: 1));
     
       await sendCommand('ATE0', expectOk: true);  // Echo off
-      await sendCommand('ATSP 6', expectOk: true); // Protocol 6
+      await sendCommand('ATSP6', expectOk: true); // Protocol 6
       await sendCommand('ATH1', expectOk: true);  // Headers on
       await sendCommand('ATL0', expectOk: true);  // Linefeeds off
       await sendCommand('ATS0', expectOk: true);  // Spaces off
       await sendCommand('ATCAF0', expectOk: true); // CAN formatting off
-      await sendCommand('ATAT2', expectOk: true);  // Timeout setting
-      await sendCommand('ATST 08', expectOk: true); // Another timeout setting
+      await sendCommand('ATAT2', expectOk: true);  // adaptive timing mode 
+      await sendCommand('ATST08', expectOk: true); // timeout 
     
       _initialized = true;
       print('OBD controller initialized.');
