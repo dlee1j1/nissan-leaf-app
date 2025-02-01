@@ -24,6 +24,7 @@ void main() {
     zoneSpecification: ZoneSpecification(
       print: (Zone self, ZoneDelegate parent, Zone zone, String line) {
         parent.print(zone, line); // Print to console
+        developer.log(line); // Add this for platform logging
         Logger.instance.log(line); // Log to our viewer
       },
     ),
@@ -141,6 +142,7 @@ class _BleScanPageState extends State<BleScanPage> {
     print('Connected to device: ${device.platformName}');
     setState(() {
       connectionStatus = 'Connected. Initializing ${device.platformName}...';
+      connectedDevice = device; 
     });
  
     try {
@@ -178,6 +180,7 @@ class _BleScanPageState extends State<BleScanPage> {
 
       // Send a command and get the response
       OBDCommand.setObdController(obdController);
+      var response = await OBDCommand.mystery.run();
       var response = await OBDCommand.lbc.run();
 
       print('SOC: ${response['state_of_charge']}%');

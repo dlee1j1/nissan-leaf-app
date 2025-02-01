@@ -34,7 +34,14 @@
   - Not sure if we should send the bytes as ASCII text or do we push out and read Bytes
 
 - 2025-01-31
+
   - big breakthrough last night. figured out the ODB commands.
   - Turns out you need to send and AT header command followed by the data specification. The code in the reference implementation was just a little opaque
   - built out the ODB command module
   - testing this morning has some issue with the ATZ command timing out. I see the > coming back so I don't know why it is not seeing it.
+  - got pretty far today - now can get all the way to the OBD port, we are writing to it and we can reliably read from it.
+  - Unfortunately, we are not getting multi-frame CAN data back but rather, we are just getting a single frame. Not sure what is wrong.
+
+- 2025-02-01
+  - verified that multi-frame CAN data is not working either using LightBlue app. Also setting ATCAF1 causes the device to send back an error message.
+  - looking up HA logs - I see that they use a mystery command to test out the CAN bus before trying to get the data. IF the mystery command fails then I suppose it just means that the Battery Management system is not running???

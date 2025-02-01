@@ -28,6 +28,32 @@ import 'dart:convert';
   }
 
 
+/// Abstract base class for OBD (On-Board Diagnostics) commands.
+/// 
+/// This class provides a common interface for sending OBD commands to a vehicle's
+/// on-board computer and decoding the responses. Subclasses of `OBDCommand` define
+/// the specific details of each command, such as the command string, header, and
+/// how to decode the response.
+///
+/// Usage: 
+///   1. Initialize the `ObdController` by calling `OBDCommand.initialize(ODBController)`.
+///   2. Use the `run()` method on specific commands, e.g.,
+///      `var response = await OBDCommand.lbc.run();` // Send the Li-ion Battery Controller command
+/// 
+/// *Creating a new OBD command:*
+/// 
+/// To create a new OBD command, subclass `OBDCommand` and implement the `decode()` method
+/// to parse the response from the vehicle and return the relevant data as a `Map<String, dynamic>`.
+///
+/// Subclasses should add a static instance of themselves to the end of the `OBDCommand` class. 
+///
+/// Clients can then use these instances to send commands to the vehicle. For example:
+///    var response = await OBDCommand.lbc.run(); // Send the Li-ion Battery Controller command
+///
+/// *The run method:*
+/// The run method coordinates the process of sending the OBD command, handling any errors, and returning the decoded response.
+///  It leverages the specific/overridden data - header, command, and decode provided by the subclasses to send the command.
+///
 abstract class OBDCommand {
   // Static instance of ObdController
   static ObdController? _obdController;
@@ -71,7 +97,18 @@ abstract class OBDCommand {
     // Step 2: Send the OBD command
     var response = await _obdController!.sendCommand(command, expectOk: false);
 
-    // Step 3: Decode the response
+    // Step 3: validation checks 
+    if (response.isEmpty) {
+        print('No valid OBD Messages returned');
+        return {};
+    }
+
+    if (response == 'NO DATA' || response == 'CAN ERROR') {
+        print('Vehicle not responding');
+        return {};
+    }
+
+    // Step 4: decode the valid response
     return decode(response);
   }
 
@@ -80,6 +117,7 @@ abstract class OBDCommand {
 
   // Static instances of commands
   static final OBDCommand lbc = _LBCCommand();
+  static final OBDCommand mystery = _MysteryCommand();
 }
 
 
@@ -115,4 +153,21 @@ class _LBCCommand extends OBDCommand {
     };
   }
 
+}
+
+class _MysteryCommand extends OBDCommand {
+  _MysteryCommand()
+      : super(
+          name: 'unknown',
+          description: 'Mystery command',
+          command: '0210C0 1',
+          header: '797',
+        );
+
+  @override
+  Map<String, dynamic> decode(String response) {
+    return {
+      'raw_response': response,
+    };
+  }
 }
