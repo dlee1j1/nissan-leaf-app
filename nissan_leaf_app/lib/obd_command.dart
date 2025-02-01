@@ -2,6 +2,32 @@ import 'obd_controller.dart';
 import 'dart:typed_data';
 import 'dart:convert';
 
+
+  // Utility functions
+  int extractInt(List<int> bytes, int start, int end) {
+    return ByteData.view(Uint8List.fromList(bytes.sublist(start, end)).buffer).getUint32(0);
+  }
+
+  List<int> hexStringToBytes(String hexString) {
+    // Remove any whitespace or non-hex characters
+    hexString = hexString.replaceAll(RegExp(r'[^0-9A-Fa-f]'), '');
+
+    // Ensure the hex string has an even length
+    if (hexString.length % 2 != 0) {
+        hexString = '0$hexString';
+    }
+
+    // Convert the hex string to bytes
+    var bytes = <int>[];
+    for (var i = 0; i < hexString.length; i += 2) {
+        var byte = int.parse(hexString.substring(i, i + 2), radix: 16);
+        bytes.add(byte);
+    }
+
+    return bytes;
+  }
+
+
 abstract class OBDCommand {
   // Static instance of ObdController
   static ObdController? _obdController;
@@ -34,7 +60,7 @@ abstract class OBDCommand {
   });
 
   // Send the command and return the response
-  Future<Map<String, dynamic>> send() async {
+  Future<Map<String, dynamic>> run() async {
     if (_obdController == null) {
       throw Exception('ObdController not initialized. Call OBDCommand.initialize() first.');
     }
@@ -46,15 +72,17 @@ abstract class OBDCommand {
     var response = await _obdController!.sendCommand(command, expectOk: false);
 
     // Step 3: Decode the response
-    return decode(utf8.encode(response));
+    return decode(response);
   }
 
   // Decode the response (must be implemented by subclasses)
-  Map<String, dynamic> decode(List<int> response);
+  Map<String, dynamic> decode(String response);
 
   // Static instances of commands
   static final OBDCommand lbc = _LBCCommand();
 }
+
+
 
 class _LBCCommand extends OBDCommand {
   _LBCCommand()
@@ -66,16 +94,18 @@ class _LBCCommand extends OBDCommand {
         );
 
   @override
-  Map<String, dynamic> decode(List<int> response) {
+  Map<String, dynamic> decode(String hexResponse) {
+    // Convert the hex string to bytes
+    var response = hexStringToBytes(hexResponse);
     if (response.isEmpty) {
       return {};
     }
 
     // Extract SOC, SOH, and other data (adjust byte ranges as needed)
-    var soc = _extractInt(response, 33, 37) / 10000; // SOC in bytes 33-36
-    var soh = _extractInt(response, 30, 32) / 102.4; // SOH in bytes 30-32
-    var batteryAh = _extractInt(response, 37, 40) / 10000; // Battery capacity in bytes 37-40
-    var hvBatteryVoltage = _extractInt(response, 20, 22) / 100; // HV battery voltage in bytes 20-22
+    var soc = extractInt(response, 33, 37) / 10000; // SOC in bytes 33-36
+    var soh = extractInt(response, 30, 32) / 102.4; // SOH in bytes 30-32
+    var batteryAh = extractInt(response, 37, 40) / 10000; // Battery capacity in bytes 37-40
+    var hvBatteryVoltage = extractInt(response, 20, 22) / 100; // HV battery voltage in bytes 20-22
 
     return {
       'state_of_charge': soc,
@@ -85,7 +115,4 @@ class _LBCCommand extends OBDCommand {
     };
   }
 
-  int _extractInt(List<int> bytes, int start, int end) {
-    return ByteData.view(Uint8List.fromList(bytes.sublist(start, end)).buffer).getUint32(0);
-  }
 }

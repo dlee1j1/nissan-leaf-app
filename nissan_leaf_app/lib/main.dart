@@ -54,7 +54,9 @@ class _BleScanPageState extends State<BleScanPage> {
   final Map<String, ScanResult> deviceMap = {};
   ScanResult? obdDevice;
   bool isScanning = false;
+  bool isConnecting = false; // Track connection state
   String connectionStatus = 'Disconnected';
+  BluetoothDevice? connectedDevice;
   int? batterySOC;
 
   @override
@@ -93,7 +95,7 @@ class _BleScanPageState extends State<BleScanPage> {
         });
       });
 
-      print('Starting Bluetooth scan...'); // This will be intercepted by the overridden `print`
+      print('Starting Bluetooth scan...'); 
       await FlutterBluePlus.startScan(
         timeout: const Duration(seconds: 15),
         withNames: ["OBDBLE"],
@@ -101,20 +103,47 @@ class _BleScanPageState extends State<BleScanPage> {
 
       // Wait for scan to complete
       await FlutterBluePlus.isScanning.where((val) => val == false).first;
-      print('Bluetooth scan completed.'); // This will be intercepted by the overridden `print`
+      print('Bluetooth scan completed.'); 
     } catch (e) {
-      print('Scan error: $e'); // This will be intercepted by the overridden `print`
+      print('Scan error: $e'); 
     } finally {
       setState(() => isScanning = false);
     }
   }
 
-  void connectToDevice(BluetoothDevice device) async {
-    try {
-      print('Connecting to device: ${device.platformName}...'); 
-      
-      await device.connect();
 
+  void connectToDevice(BluetoothDevice device) async {
+    const MAX_RETRIES = 3;
+    if (isConnecting) {
+      return; // Ignore further clicks if already connecting
+    }
+ 
+    setState(() {
+      isConnecting = true;
+      connectionStatus = 'Connecting to ${device.platformName}...';
+    });
+
+    var tries = 0;
+    while (await device.connectionState.first != BluetoothConnectionState.connected) {
+      try {
+        await device.connect(timeout: const Duration(seconds: 5));
+      } catch (e) {
+        tries++;
+        print('Connection attempt ${tries} failed: $e');
+        if (tries >= MAX_RETRIES) {
+          throw Exception('Failed to connect after $MAX_RETRIES attempts');
+        }
+        await Future.delayed(const Duration(seconds: 2));
+      }
+    }
+
+
+    print('Connected to device: ${device.platformName}');
+    setState(() {
+      connectionStatus = 'Connected. Initializing ${device.platformName}...';
+    });
+ 
+    try {
       var services = await device.discoverServices();
       print('Found ${services.length} services:');
     
@@ -144,16 +173,12 @@ class _BleScanPageState extends State<BleScanPage> {
 
       // Create ObdController instance
       var obdController = ObdController(characteristic);
-      print('initializing odb controller...');
+      print('Found services - initializing odb controller...');
       await obdController.initialize();
 
-      print('Connected to device: ${device.platformName}');
-
-//      int soc = await obdController.readBatterySOC();
       // Send a command and get the response
       OBDCommand.setObdController(obdController);
-      var response = await OBDCommand.lbc.send();
-
+      var response = await OBDCommand.lbc.run();
 
       print('SOC: ${response['state_of_charge']}%');
       print('SOH: ${response['hv_battery_health']}%');
@@ -173,8 +198,27 @@ class _BleScanPageState extends State<BleScanPage> {
       setState(() {
         connectionStatus = 'Error: ${e.toString()}';
       });
+    } finally {
+      setState(() { 
+        isConnecting = false;
+      });
     }
   }  
+
+  
+  Future<void> disconnectDevice() async {
+    if (connectedDevice != null) {
+      print('Disconnecting from device: ${connectedDevice!.platformName}...');
+      await connectedDevice!.disconnect();
+      connectedDevice = null; // Clear the connected device
+      setState(() {
+        connectionStatus = 'Disconnected';
+        batterySOC = null;
+      });
+      print('Device disconnected.');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     // Convert map values to list for ListView
@@ -232,7 +276,7 @@ class _BleScanPageState extends State<BleScanPage> {
                     ],
                   ),
                   isThreeLine: true,
-                  onTap: () => connectToDevice(device.device),
+                  onTap: isConnecting ? null : () => connectToDevice(device.device), // Disable if connecting
                 );
               },
             ),
@@ -242,6 +286,16 @@ class _BleScanPageState extends State<BleScanPage> {
             flex: 1,
             child: LogViewer(logs: Logger.instance.logs), // Pass logs to LogViewer
           ),
+
+          // Disconnect Button
+          if (connectedDevice != null)
+            Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: ElevatedButton(
+                onPressed: disconnectDevice,
+                child: const Text('Disconnect'),
+              ),
+            ),
         ],
       ),
     );

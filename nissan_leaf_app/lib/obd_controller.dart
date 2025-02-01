@@ -2,6 +2,7 @@ import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'dart:convert';
 import 'dart:async';
 import 'dart:typed_data';
+import 'dart:collection';
 
 class ObdCommandError extends Error {
   final String command;
@@ -15,23 +16,27 @@ class ObdCommandError extends Error {
 
 class ObdController {
   final BluetoothCharacteristic characteristic;
-  final StreamController<String> _responseController = StreamController.broadcast();
+  final _responseQueue = Queue<String>();
+
   bool _initialized = false;
 
   ObdController(this.characteristic) {
     _setupNotifications();
   }
 
+  void _handleNotification(List<int> value) {
+    var response = utf8.decode(value).replaceAll('\x00', '').trim();
+    print('Received notification: $response');
+    _responseQueue.add(response);
+  }
+
   Future<void> _setupNotifications() async {
     print('Setting up notifications...');
     await characteristic.setNotifyValue(true);
-    characteristic.value.listen((value) {
-      var response = utf8.decode(value).replaceAll('\x00', '').trim();
-      print('Received notification: $response');
-      _responseController.add(response);
-    });
+    characteristic.value.listen(_handleNotification);
     print('Notifications set up.');
   }
+
 
   Future<String> sendCommand(String command, {bool expectOk = false}) async {
 
@@ -45,8 +50,8 @@ class ObdController {
       var buffer = '';
       var startTime = DateTime.now();
 
-      // Clear the notification buffer before sending a new command
-      _responseController.add(''); // Clear the stream buffer
+      await Future.delayed(Duration(milliseconds: 100)); // Wait for the notification to be processed
+      _responseQueue.clear(); // Clear the queue
 
         // Send the command
       print('Sending command: $command');
@@ -54,27 +59,26 @@ class ObdController {
 
       // Wait for the response
       print('Waiting for response...');
-      await for (var chunk in _responseController.stream) {
-        print('Received chunk: $chunk');
-        buffer += chunk;
-        // Debug: Print the buffer content
-        print('Buffer content: $buffer');
 
-        // Clean the buffer and check for the prompt
-        var cleanedBuffer = buffer.replaceAll('\x00', '').trim();
+      while (buffer.contains(ELM_PROMPT) == false) {
 
-        print('Buffer containes ELM_PROMPT - ${buffer.contains(ELM_PROMPT)}.');
-        print('CleanedBuffer containes ELM_PROMPT - ${cleanedBuffer.contains(ELM_PROMPT)}.');
-        if (cleanedBuffer.contains(ELM_PROMPT)) {
-          break; // Exit the loop if the prompt is found
+        while (_responseQueue.isEmpty) {
+          // Check for timeout
+          if (DateTime.now().difference(startTime) > TIMEOUT) {
+            print('Timeout waiting for response to command: $command');
+            throw ObdCommandError(command, 'Timeout waiting for response');
+          }
+          await Future.delayed(Duration(milliseconds: 100));
         }
 
-        // Check for timeout
-        if (DateTime.now().difference(startTime) > TIMEOUT) {
-          print('Timeout waiting for response to command: $command');
-          throw ObdCommandError(command, 'Timeout waiting for response');
-        }
-      } // End of for loop
+        while (_responseQueue.isNotEmpty) {
+          var chunk = _responseQueue.removeFirst();
+          print('Received chunk: $chunk');
+          buffer += chunk;
+          // Debug: Print the buffer content
+          print('Buffer content: $buffer');
+        } 
+      }  // end of ELM_PROMPT loop
 
       // Clean the response
       var response = buffer.replaceAll(ELM_PROMPT, '').trim();
