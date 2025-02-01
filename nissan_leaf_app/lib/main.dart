@@ -24,7 +24,7 @@ void main() {
     zoneSpecification: ZoneSpecification(
       print: (Zone self, ZoneDelegate parent, Zone zone, String line) {
         parent.print(zone, line); // Print to console
-        developer.log(line); // Add this for platform logging
+       // developer.log(line); // Add this for platform logging
         Logger.instance.log(line); // Log to our viewer
       },
     ),
@@ -180,8 +180,10 @@ class _BleScanPageState extends State<BleScanPage> {
 
       // Send a command and get the response
       OBDCommand.setObdController(obdController);
-      var response = await OBDCommand.mystery.run();
-      var response = await OBDCommand.lbc.run();
+      var response = await OBDCommand.probe.run();
+      // TODO: stop the scan if probe command doesn't return a response
+
+      response = await OBDCommand.lbc.run();
 
       print('SOC: ${response['state_of_charge']}%');
       print('SOH: ${response['hv_battery_health']}%');

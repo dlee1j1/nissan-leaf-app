@@ -117,7 +117,7 @@ abstract class OBDCommand {
 
   // Static instances of commands
   static final OBDCommand lbc = _LBCCommand();
-  static final OBDCommand mystery = _MysteryCommand();
+  static final OBDCommand probe = _ProbeCommand();
 }
 
 
@@ -155,8 +155,10 @@ class _LBCCommand extends OBDCommand {
 
 }
 
-class _MysteryCommand extends OBDCommand {
-  _MysteryCommand()
+/// Probe command - it's a mystery command that we use to probe the vehicle for OBD data. 
+/// if it returns an error, then we know the rest of the data will not work as expected. 
+class _ProbeCommand extends OBDCommand {
+  _ProbeCommand()
       : super(
           name: 'unknown',
           description: 'Mystery command',
