@@ -133,8 +133,8 @@ class ObdController {
       await sendCommand('ATL0', expectOk: true);  // Linefeeds off
       await sendCommand('ATS0', expectOk: true);  // Spaces off
       await sendCommand('ATCAF0', expectOk: true); // CAN formatting off
-      await sendCommand('ATAT2', expectOk: true);  // adaptive timing mode 
-      await sendCommand('ATST08', expectOk: true); // timeout 
+    //  await sendCommand('ATAT2', expectOk: true);  // adaptive timing mode 
+    //  await sendCommand('ATST08', expectOk: true); // timeout 
     
       _initialized = true;
       print('OBD controller initialized.');
