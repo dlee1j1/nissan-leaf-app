@@ -191,6 +191,28 @@ class _ProbeCommand extends OBDCommand {
   }
 }
 
+/// Handles CAN protocol messages from vehicle OBD responses
+/// 
+/// The CAN protocol splits long messages into multiple frames:
+/// - Single Frame (SF): Complete message in one frame
+/// - First Frame (FF): First part of multi-frame message, contains total length
+/// - Consecutive Frame (CF): Remaining parts of message with sequence numbers
+/// 
+/// Frame Structure:
+/// [00 00 07 E8] - CAN ID/Header (4 bytes)
+///   - Priority and addressing information
+///   - Identifies source/destination ECUs
+/// [10] - Protocol Control Information (PCI) byte
+///   - 0x00: Single Frame
+///   - 0x10: First Frame  
+///   - 0x20-0x2F: Consecutive Frames (with sequence number)
+/// [...] - Data bytes
+/// 
+/// Usage:
+/// ```
+/// var messageData = CANProtocolHandler.parseMessage(hexResponse);
+/// // messageData contains assembled bytes from all frames
+/// ```
 class CANProtocolHandler {
   static const FRAME_TYPE_SF = 0x00;  // Single Frame
   static const FRAME_TYPE_FF = 0x10;  // First Frame
@@ -201,13 +223,15 @@ class CANProtocolHandler {
 
   static List<int> parseMessage(String hexResponse) {
     var frames = hexResponse.split('\n')
-        .where((f) => f.isNotEmpty)
-        .map((f) => hexStringToBytes(f))
+        .where((f) => f.isNotEmpty) // Remove empty lines
+        .map((f) => "00000" + f)  // Always pad for Protocol 6 
+        .map((f) => hexStringToBytes(f)) // Convert to hex to bytes
         .toList();
 
     // Validate each frame
     for (var frame in frames) {
       if (frame.length < MIN_FRAME_LENGTH || frame.length > MAX_FRAME_LENGTH) {
+        print('Invalid frame length: $frame has length ${frame.length}');
         throw ObdCommandError('CAN Frame', 'Invalid frame length');
       }
     }
@@ -227,16 +251,29 @@ class CANProtocolHandler {
 
   static List<int> _parseSingleFrame(List<int> frame) {
     var length = frame[4] & 0x0F;
-    return frame.sublist(5, 5 + length);
+    final messageData = frame.sublist(5, 5 + length);
+    print('Single Frame: $messageData');
+    return messageData;
   }
 
   static List<int> _parseMultiFrame(List<List<int>> frames) {
-    var totalLength = ((frames[0][4] & 0x0F) << 8) | frames[0][5];
-    
-    // Initialize message data with FF payload
-    var messageData = frames[0].sublist(6);
-    
-    // Sort and validate CF frames
+  /* 
+   CAN protocol specified that the First Frame (FF) uses 12 bits for length encoding.
+    1. frames[0][4] - Gets PCI byte from first frame (0x10)
+    2. & 0x0F - Masks lower nibble to get length bits (0x0)
+    3. << 8 - Shifts those bits left by 8 positions (0x000) 
+    4. frames[0][5] - Gets next byte containing rest of length (0x20)
+    5. adds the two to get total length (0x0020)
+
+     Example FF: 00 00 07 E8 10 20 49 04...
+                             ^^ ^^ PCI and length bytes
+      PCI byte: 0x10
+      Length byte: 0x20
+      Calculation: ((0x0) << 8) + 0x20 = 32
+  */
+    var totalLength = ((frames[0][4] & 0x0F) << 8) + frames[0][5];
+        
+    // Sort and validate consecutive frames (CF)
     var cfFrames = frames.sublist(1);
     var sortedCF = _sortConsecutiveFrames(cfFrames);
     
@@ -244,18 +281,21 @@ class CANProtocolHandler {
       throw ObdCommandError('CAN Frame', 'Invalid frame sequence');
     }
 
+    // Initialize message data with first frame (FF) payload
+    var messageData = frames[0].sublist(6);
+
     // Combine CF data
     for (var frame in sortedCF) {
+       // Skip the first 5 bytes of each frame which contain:
+       // 3 bytes CAN ID
+       //  1 byte length
+       //  1 byte PCI (Protocol Control Information) The remaining bytes are actual data
       messageData.addAll(frame.sublist(5));
     }
 
     // Trim to specified length
     messageData = messageData.sublist(0, totalLength);
-
-    // Special handling for DTCs
-    if (messageData[0] == 0x43) {
-      return _handleDTCResponse(messageData);
-    }
+    print('Multi Frame: $messageData');
 
     return messageData;
   }
@@ -273,11 +313,5 @@ class CANProtocolHandler {
       }
     }
     return true;
-  }
-
-  static List<int> _handleDTCResponse(List<int> data) {
-    var numDTCs = data[1];
-    var dtcBytes = numDTCs * 2;
-    return data.sublist(0, dtcBytes + 2);
   }
 }
