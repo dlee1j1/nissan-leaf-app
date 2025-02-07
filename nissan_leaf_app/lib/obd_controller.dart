@@ -133,7 +133,9 @@ class ObdController {
       await sendCommand('ATL0', expectOk: true);  // Linefeeds off
       await sendCommand('ATS0', expectOk: true);  // Spaces off
       await sendCommand('ATCAF0', expectOk: true); // CAN formatting off
-    //  await sendCommand('ATAT2', expectOk: true);  // adaptive timing mode 
+      await sendCommand('ATFCSD300000', expectOk: true); //set flow control 
+      await sendCommand('ATFCSM1', expectOk: true);  // Set flow control mode
+//  await sendCommand('ATAT2', expectOk: true);  // adaptive timing mode 
     //  await sendCommand('ATST08', expectOk: true); // timeout 
     
       _initialized = true;

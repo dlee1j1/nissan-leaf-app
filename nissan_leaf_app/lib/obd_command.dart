@@ -71,6 +71,13 @@ abstract class OBDCommand {
     _obdController = mockController;
   }
 
+  // Static instances of commands
+  static final OBDCommand lbc = _LBCCommand();
+  static final OBDCommand probe = _ProbeCommand();
+  static final OBDCommand powerSwitch = _PowerSwitchCommand();
+  static final OBDCommand gearPosition = _GearPositionCommand();
+  static final OBDCommand battery12v = _12VBatteryCommand();
+
   // Command details (set by subclasses via constructor)
   final String name;
   final String description;
@@ -117,9 +124,7 @@ abstract class OBDCommand {
   // Decode the response (must be implemented by subclasses)
   Map<String, dynamic> decode(List<int> response);
 
-  // Static instances of commands
-  static final OBDCommand lbc = _LBCCommand();
-  static final OBDCommand probe = _ProbeCommand();
+
 }
 
 
@@ -190,6 +195,67 @@ class _ProbeCommand extends OBDCommand {
     };
   }
 }
+
+class _PowerSwitchCommand extends OBDCommand {
+  _PowerSwitchCommand()
+      : super(
+          name: 'power_switch',
+          description: 'Power Switch Status',
+          command: '021001',
+          header: '79B',
+        );
+
+  @override
+  Map<String, dynamic> decode(List<int> data) {
+    return {
+      'power_switch': (data[3] & 0x80) == 0x80,
+    };
+  }
+}
+
+class _GearPositionCommand extends OBDCommand {
+  _GearPositionCommand()
+      : super(
+          name: 'gear_position',
+          description: 'Current Gear Position',
+          command: '021001',
+          header: '79B',
+        );
+
+  @override
+  Map<String, dynamic> decode(List<int> data) {
+    String position;
+    switch (data[3]) {
+      case 1: position = "Park"; break;
+      case 2: position = "Reverse"; break;
+      case 3: position = "Neutral"; break;
+      case 4: position = "Drive"; break;
+      case 5: position = "Eco"; break;
+      default: position = "Unknown";
+    }
+    return {'gear_position': position};
+  }
+}
+
+class _12VBatteryCommand extends OBDCommand {
+  _12VBatteryCommand()
+      : super(
+          name: '12v_battery',
+          description: '12V Battery Voltage',
+          command: '021001',
+          header: '79B',
+        );
+
+  @override
+  Map<String, dynamic> decode(List<int> data) {
+    return {
+      'bat_12v_voltage': data[3] * 0.08,
+    };
+  }
+}
+
+
+
 
 /// Handles CAN protocol messages from vehicle OBD responses
 /// 
@@ -272,7 +338,8 @@ class CANProtocolHandler {
       Calculation: ((0x0) << 8) + 0x20 = 32
   */
     var totalLength = ((frames[0][4] & 0x0F) << 8) + frames[0][5];
-        
+    print('Expected Length: $totalLength');    
+
     // Sort and validate consecutive frames (CF)
     var cfFrames = frames.sublist(1);
     var sortedCF = _sortConsecutiveFrames(cfFrames);
@@ -293,9 +360,10 @@ class CANProtocolHandler {
       messageData.addAll(frame.sublist(5));
     }
 
+    print('Multi Frame: $messageData. Length: ${messageData.length}. Expected Length: $totalLength');
+
     // Trim to specified length
     messageData = messageData.sublist(0, totalLength);
-    print('Multi Frame: $messageData');
 
     return messageData;
   }

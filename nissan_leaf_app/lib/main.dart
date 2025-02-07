@@ -183,6 +183,13 @@ class _BleScanPageState extends State<BleScanPage> {
       var response = await OBDCommand.probe.run();
       // TODO: stop the scan if probe command doesn't return a response
 
+      response = await OBDCommand.powerSwitch.run();
+      print('Power Switch: $response');
+      response = await OBDCommand.gearPosition.run();
+      print('Gear Position: $response');
+      response = await OBDCommand.battery12v.run(); 
+      print('12V Battery: $response');
+
       response = await OBDCommand.lbc.run();
 
       print('SOC: ${response['state_of_charge']}%');
