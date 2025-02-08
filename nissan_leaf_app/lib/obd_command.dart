@@ -5,7 +5,15 @@ import 'dart:convert';
 
   // Utility functions
   int extractInt(List<int> bytes, int start, int end) {
-    return ByteData.view(Uint8List.fromList(bytes.sublist(start, end)).buffer).getUint32(0);
+    print('Calling extractInt on $bytes. Length - ${bytes.length}. Start - $start, End - $end');
+    print('Offset - $start = ${bytes[start]}, Offset - $end minus 1 = ${bytes[end-1]}');
+    final sublist = bytes.sublist(start, end);
+    // Ensure at least 4 bytes by padding with zeros
+    final paddedBytes = Uint8List(4)..setRange(0, sublist.length, sublist);
+
+    // Read as uint32
+    final result = ByteData.view(paddedBytes.buffer).getUint32(0);
+    return result;
   }
 
   List<int> hexStringToBytes(String hexString) {
@@ -77,6 +85,8 @@ abstract class OBDCommand {
   static final OBDCommand powerSwitch = _PowerSwitchCommand();
   static final OBDCommand gearPosition = _GearPositionCommand();
   static final OBDCommand battery12v = _12VBatteryCommand();
+  static final OBDCommand odometer = _OdometerCommand();
+  
 
   // Command details (set by subclasses via constructor)
   final String name;
@@ -100,6 +110,8 @@ abstract class OBDCommand {
 
     // Step 1: Set the header (AT command)
     await _obdController!.sendCommand('ATSH $header', expectOk: true);
+    await _obdController!.sendCommand('ATFCSH $header', expectOk: true);
+    await _obdController!.sendCommand('ATFCSM1', expectOk: true); // flow control
 
     // Step 2: Send the OBD command
     final response = await _obdController!.sendCommand(command, expectOk: false);
@@ -201,8 +213,8 @@ class _PowerSwitchCommand extends OBDCommand {
       : super(
           name: 'power_switch',
           description: 'Power Switch Status',
-          command: '021001',
-          header: '79B',
+          command: '03221304',
+          header: '797',
         );
 
   @override
@@ -218,8 +230,8 @@ class _GearPositionCommand extends OBDCommand {
       : super(
           name: 'gear_position',
           description: 'Current Gear Position',
-          command: '021001',
-          header: '79B',
+          command: '03221156',
+          header: '797',
         );
 
   @override
@@ -242,14 +254,31 @@ class _12VBatteryCommand extends OBDCommand {
       : super(
           name: '12v_battery',
           description: '12V Battery Voltage',
-          command: '021001',
-          header: '79B',
+          command: '03221103',
+          header: '797',
         );
 
   @override
   Map<String, dynamic> decode(List<int> data) {
     return {
       'bat_12v_voltage': data[3] * 0.08,
+    };
+  }
+}
+
+class _OdometerCommand extends OBDCommand {
+  _OdometerCommand()
+      : super(
+          name: 'odometer',
+          description: 'Total odometer reading',
+          command: '03220e01',
+          header: '743',
+        );
+
+  @override
+  Map<String, dynamic> decode(List<int> data) {
+    return {
+      'odometer': extractInt(data, 3, 6),
     };
   }
 }
@@ -288,11 +317,15 @@ class CANProtocolHandler {
   static const MIN_FRAME_LENGTH = 6;
 
   static List<int> parseMessage(String hexResponse) {
-    var frames = hexResponse.split('\n')
+    var frames = hexResponse.split(RegExp(r'[\n\r]'))
         .where((f) => f.isNotEmpty) // Remove empty lines
         .map((f) => "00000" + f)  // Always pad for Protocol 6 
         .map((f) => hexStringToBytes(f)) // Convert to hex to bytes
         .toList();
+
+    print('hexResponse: $hexResponse');
+    print('Frames: $frames');
+
 
     // Validate each frame
     for (var frame in frames) {
@@ -317,8 +350,8 @@ class CANProtocolHandler {
 
   static List<int> _parseSingleFrame(List<int> frame) {
     var length = frame[4] & 0x0F;
-    final messageData = frame.sublist(5, 5 + length);
-    print('Single Frame: $messageData');
+    final messageData = frame.sublist(5); // not sure if this should be 5 or 4 //XXXX
+    print('Single Frame: $messageData; Length: $length');
     return messageData;
   }
 
@@ -349,7 +382,7 @@ class CANProtocolHandler {
     }
 
     // Initialize message data with first frame (FF) payload
-    var messageData = frames[0].sublist(6);
+    var messageData = frames[0].sublist(5);  // should this be sublist(5 or 4)?
 
     // Combine CF data
     for (var frame in sortedCF) {

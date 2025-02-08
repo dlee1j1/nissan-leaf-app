@@ -204,7 +204,12 @@ class _BleScanPageState extends State<BleScanPage> {
         connectionStatus = 'Connected';
         batterySOC = soc;
       });
-      
+
+      response = await OBDCommand.odometer.run(); 
+      print('Odometer: $response');
+
+
+
     } catch (e) {
       print('Connection error: $e');
       setState(() {
