@@ -43,5 +43,14 @@
   - Unfortunately, we are not getting multi-frame CAN data back but rather, we are just getting a single frame. Not sure what is wrong.
 
 - 2025-02-01
+
   - verified that multi-frame CAN data is not working either using LightBlue app. Also setting ATCAF1 causes the device to send back an error message.
   - looking up HA logs - I see that they use a mystery command to test out the CAN bus before trying to get the data. IF the mystery command fails then I suppose it just means that the Battery Management system is not running???
+
+- 2025-02-08
+- lots of progress. A few insights
+  -- CAN protocol parsing is in protocol_can.py
+  -- it deals with the CAN bus frames. Put that into OBDCommand
+  -- multi-frames need to be setup by AT commands send as part of the header call. The AI didn't do that part when it copied over the \_set_header command.
+  -- there's also flow control AT command (AT3000) or something like that that is done during initialization that was buried in the obd.py code instead of the ELM 327 code
+  -- not sure exactly why the single frame parsing between the PYthon code and the DART code is off by one. I can't see where that extra offset is done in python
