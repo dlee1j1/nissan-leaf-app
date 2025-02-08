@@ -189,6 +189,8 @@ class _BleScanPageState extends State<BleScanPage> {
       print('Gear Position: $response');
       response = await OBDCommand.battery12v.run(); 
       print('12V Battery: $response');
+      response = await OBDCommand.odometer.run(); 
+      print('Odometer: $response');
 
       response = await OBDCommand.lbc.run();
 
@@ -205,8 +207,6 @@ class _BleScanPageState extends State<BleScanPage> {
         batterySOC = soc;
       });
 
-      response = await OBDCommand.odometer.run(); 
-      print('Odometer: $response');
 
 
 

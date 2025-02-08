@@ -7,12 +7,15 @@ import 'dart:convert';
   int extractInt(List<int> bytes, int start, int end) {
     print('Calling extractInt on $bytes. Length - ${bytes.length}. Start - $start, End - $end');
     print('Offset - $start = ${bytes[start]}, Offset - $end minus 1 = ${bytes[end-1]}');
+    if (end-start > 4) {
+        throw Exception('Cannot extract more than 4 bytes from [$start] to [$end]');
+    }
     final sublist = bytes.sublist(start, end);
-    // Ensure at least 4 bytes by padding with zeros
-    final paddedBytes = Uint8List(4)..setRange(0, sublist.length, sublist);
-
+    // Ensure at least 4 bytes by padding with zeros (note this is big-endian)
+    final paddedBytes = Uint8List(4)..setRange(4 - sublist.length, 4, sublist);
+ 
     // Read as uint32
-    final result = ByteData.view(paddedBytes.buffer).getUint32(0);
+    final result = ByteData.view(paddedBytes.buffer).getUint32(0, Endian.big);
     return result;
   }
 
@@ -318,6 +321,7 @@ class CANProtocolHandler {
 
   static List<int> parseMessage(String hexResponse) {
     var frames = hexResponse.split(RegExp(r'[\n\r]'))
+        .map((f) => f.trim()) // Remove leading/trailing whitespace
         .where((f) => f.isNotEmpty) // Remove empty lines
         .map((f) => "00000" + f)  // Always pad for Protocol 6 
         .map((f) => hexStringToBytes(f)) // Convert to hex to bytes

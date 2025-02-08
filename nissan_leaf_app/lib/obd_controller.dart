@@ -25,7 +25,7 @@ class ObdController {
   }
 
   void _handleNotification(List<int> value) {
-    var response = utf8.decode(value).replaceAll('\x00', '').trim();
+    var response = utf8.decode(value).replaceAll('\x00', '');
     print('Received notification: $response');
     _responseQueue.add(response);
   }
@@ -76,7 +76,7 @@ class ObdController {
         while (_responseQueue.isNotEmpty) {
           var chunk = _responseQueue.removeFirst();
           print('Received chunk: $chunk');
-          if (chunk == command) continue; // Skip the command echo
+          if (chunk.trim() == command) continue; // Skip the command echo
           if (chunk.contains(ELM_PROMPT)) {
             buffer += chunk.replaceAll(ELM_PROMPT, '').trim();
             return buffer;
@@ -134,9 +134,6 @@ class ObdController {
       await sendCommand('ATS0', expectOk: true);  // Spaces off
       await sendCommand('ATCAF0', expectOk: true); // CAN formatting off
       await sendCommand('ATFCSD300000', expectOk: true); //set flow control 
-//      await sendCommand('ATFCSM1', expectOk: true);  // Set flow control mode - doesn't work
-//  await sendCommand('ATAT2', expectOk: true);  // adaptive timing mode 
-    //  await sendCommand('ATST08', expectOk: true); // timeout 
     
       _initialized = true;
       print('OBD controller initialized.');
