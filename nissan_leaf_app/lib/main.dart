@@ -7,10 +7,10 @@ import 'components/log_viewer.dart';
 import 'services/logger.dart'; // Import the Logger service
 import 'dart:async'; // Override the global `print` function
 import 'dart:convert';
+import 'obd_test_page.dart';
 
 const SERVICE_UUID = "0000ffe0-0000-1000-8000-00805f9b34fb";
 const CHARACTERISTIC_UUID = "0000ffe1-0000-1000-8000-00805f9b34fb";
-
 
 
 void main() {
@@ -40,6 +40,9 @@ class NissanLeafApp extends StatelessWidget {
       title: 'Nissan Leaf OBD',
       theme: ThemeData(primarySwatch: Colors.blue),
       home: BleScanPage(), // Pass the logger to the page
+      routes: {
+        '/obd_test': (context) => ObdTestPage(),
+      },
     );
   }
 }
@@ -242,7 +245,15 @@ class _BleScanPageState extends State<BleScanPage> {
     final devices = deviceMap.values.toList();
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Nissan Leaf OBD Scanner')),
+      appBar: AppBar(
+        title: const Text('Nissan Leaf OBD Scanner'),
+        actions: [
+            ElevatedButton(
+              onPressed: () => Navigator.pushNamed(context, '/obd_test'),
+              child: Text('OBD Test Page'),
+            ),
+          ]
+      ),
       body: Column(
         children: [
           // Status section

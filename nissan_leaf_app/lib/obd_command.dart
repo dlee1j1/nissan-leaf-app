@@ -5,17 +5,15 @@ import 'dart:convert';
 
   // Utility functions
   int extractInt(List<int> bytes, int start, int end) {
-    print('Calling extractInt on $bytes. Length - ${bytes.length}. Start - $start, End - $end');
-    print('Offset - $start = ${bytes[start]}, Offset - $end minus 1 = ${bytes[end-1]}');
-    if (end-start > 4) {
-        throw Exception('Cannot extract more than 4 bytes from [$start] to [$end]');
+    // bigEndian
+    if (end - start > 4) {
+      throw Exception('Cannot extract more than 4 bytes (32 bits)');
     }
-    final sublist = bytes.sublist(start, end);
-    // Ensure at least 4 bytes by padding with zeros (note this is big-endian)
-    final paddedBytes = Uint8List(4)..setRange(4 - sublist.length, 4, sublist);
- 
-    // Read as uint32
-    final result = ByteData.view(paddedBytes.buffer).getUint32(0, Endian.big);
+
+    int result = 0;
+    for (int i = start; i < end; i++) {
+      result = (result << 8) + bytes[i];
+    }
     return result;
   }
 
@@ -171,11 +169,14 @@ class _LBCCommand extends OBDCommand {
     int stateOfHealth;
     int batteryAh;
 
+    print('data length = ${data.length}');
     if (data.length > 41) {
+        print ('data length > 41');
         stateOfCharge = extractInt(data, 33, 36) ~/ 10000;
         stateOfHealth = extractInt(data, 30, 32) ~/ 102.4;
         batteryAh = extractInt(data, 37, 40) ~/ 10000;
     } else {
+        print ('data length <= 41');
         stateOfCharge = extractInt(data, 31, 34) ~/ 10000;
         stateOfHealth = extractInt(data, 28, 30) ~/ 102.4;
         batteryAh = extractInt(data, 34, 37) ~/ 10000;
@@ -386,21 +387,22 @@ class CANProtocolHandler {
     }
 
     // Initialize message data with first frame (FF) payload
-    var messageData = frames[0].sublist(5);  // should this be sublist(5 or 4)?
+    var messageData = frames[0].sublist(6);  // should this be sublist(5 or 4)?
 
     // Combine CF data
     for (var frame in sortedCF) {
-       // Skip the first 5 bytes of each frame which contain:
+       // Skip the first 6 bytes of each frame which contain:
        // 3 bytes CAN ID
        //  1 byte length
        //  1 byte PCI (Protocol Control Information) The remaining bytes are actual data
+       //  1 byte sequence number (for consecutive frames CF)
       messageData.addAll(frame.sublist(5));
     }
 
     print('Multi Frame: $messageData. Length: ${messageData.length}. Expected Length: $totalLength');
 
     // Trim to specified length
-    messageData = messageData.sublist(0, totalLength);
+    // messageData = messageData.sublist(0, totalLength);
 
     return messageData;
   }

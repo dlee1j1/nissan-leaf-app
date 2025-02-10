@@ -15,7 +15,7 @@ class ObdCommandError extends Error {
 }
 
 class ObdController {
-  final BluetoothCharacteristic characteristic;
+  final BluetoothCharacteristic? characteristic;
   final _responseQueue = Queue<String>();
 
   bool _initialized = false;
@@ -23,6 +23,9 @@ class ObdController {
   ObdController(this.characteristic) {
     _setupNotifications();
   }
+
+  // Test constructor
+  ObdController.test() : characteristic = null;
 
   void _handleNotification(List<int> value) {
     var response = utf8.decode(value).replaceAll('\x00', '');
@@ -32,8 +35,8 @@ class ObdController {
 
   Future<void> _setupNotifications() async {
     print('Setting up notifications...');
-    await characteristic.setNotifyValue(true);
-    characteristic.value.listen(_handleNotification);
+    await characteristic?.setNotifyValue(true);
+    characteristic?.value.listen(_handleNotification);
     print('Notifications set up.');
   }
 
@@ -55,7 +58,7 @@ class ObdController {
 
         // Send the command
       print('Sending command: $command');
-      await characteristic.write(utf8.encode(command + '\r'));
+      await characteristic?.write(utf8.encode(command + '\r'));
 
       // Wait for the response
       print('Waiting for response...');
