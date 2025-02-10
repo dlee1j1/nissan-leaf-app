@@ -380,8 +380,8 @@ class CANProtocolHandler {
 
     // Sort and validate consecutive frames (CF)
     var cfFrames = frames.sublist(1);
+    print('Consecutive Frames: $cfFrames');
     var sortedCF = _sortConsecutiveFrames(cfFrames);
-    
     if (!_validateSequence(sortedCF)) {
       throw ObdCommandError('CAN Frame', 'Invalid frame sequence');
     }
@@ -413,6 +413,7 @@ class CANProtocolHandler {
 
   static bool _validateSequence(List<List<int>> frames) {
     for (var i = 0; i < frames.length - 1; i++) {
+      print('Current: ${frames[i][4] & 0x0F} Next: ${frames[i + 1][4] & 0x0F}');
       var current = frames[i][4] & 0x0F;
       var next = frames[i + 1][4] & 0x0F;
       if (next != (current + 1) % 16) {
