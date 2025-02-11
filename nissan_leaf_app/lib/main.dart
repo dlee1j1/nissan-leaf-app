@@ -7,6 +7,7 @@ import 'components/log_viewer.dart';
 import 'package:simple_logger/simple_logger.dart';
 import 'dart:async'; 
 import 'obd_test_page.dart';
+import 'components/obd_commands_panel.dart';
 
 const SERVICE_UUID = "0000ffe0-0000-1000-8000-00805f9b34fb";
 const CHARACTERISTIC_UUID = "0000ffe1-0000-1000-8000-00805f9b34fb";
@@ -28,6 +29,11 @@ void main() {
       _log.severe('Error: $error\n$stack');
     },
   );
+
+  final commands = OBDCommand.getAllCommands();
+  _log.info('There are ${commands.length} commands');
+  _log.info('Registered commands before panel: ${OBDCommand.lbc.name}'); // Force static initialization
+   _log.info('Available commands: ${OBDCommand.getAllCommands().length}');
 }
 
 class NissanLeafApp extends StatelessWidget {
@@ -60,7 +66,6 @@ class _BleScanPageState extends State<BleScanPage> {
   bool isConnecting = false; // Track connection state
   String connectionStatus = 'Disconnected';
   BluetoothDevice? connectedDevice;
-  int? batterySOC;
 
   @override
   void initState() {
@@ -179,31 +184,12 @@ class _BleScanPageState extends State<BleScanPage> {
       var obdController = ObdController(characteristic);
       _log.info('Found services - initializing odb controller...');
       await obdController.initialize();
-
       // Send a command and get the response
       OBDCommand.setObdController(obdController);
       var response = await OBDCommand.probe.run();
 
-      response = await OBDCommand.gearPosition.run();
-      print('Gear Position: $response');
-      response = await OBDCommand.battery12v.run(); 
-      print('12V Battery: $response');
-      response = await OBDCommand.odometer.run(); 
-      print('Odometer: $response');
-
-      response = await OBDCommand.lbc.run();
-
-      print('SOC: ${response['state_of_charge']}%');
-      print('SOH: ${response['hv_battery_health']}%');
-      print('Battery Capacity: ${response['hv_battery_Ah']}Ah');
-      print('HV Battery Voltage: ${response['hv_battery_voltage']}V');
-
-      int soc = response['state_of_charge'];  
-      print('Battery SOC: $soc%');
- 
       setState(() {
         connectionStatus = 'Connected';
-        batterySOC = soc;
       });
 
 
@@ -229,7 +215,6 @@ class _BleScanPageState extends State<BleScanPage> {
       connectedDevice = null; // Clear the connected device
       setState(() {
         connectionStatus = 'Disconnected';
-        batterySOC = null;
       });
       _log.info('Device disconnected.');
     }
@@ -258,7 +243,6 @@ class _BleScanPageState extends State<BleScanPage> {
             child: Column(
               children: [
                 Text('Status: $connectionStatus'),
-                if (batterySOC != null) Text('Battery: $batterySOC%'),
               ],
             ),
           ),
@@ -279,28 +263,33 @@ class _BleScanPageState extends State<BleScanPage> {
             ),
           ),
           // Device List Section
-          Expanded(
-            flex: 2,
-            child: ListView.builder(
-              itemCount: devices.length,
-              itemBuilder: (context, index) {
-                final device = devices[index];
-                return ListTile(
-                  title: Text(device.device.platformName.isEmpty
-                      ? 'Unknown Device'
-                      : device.device.platformName),
-                  subtitle: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('ID: ${device.device.remoteId}'),
-                      Text('RSSI: ${device.rssi}'),
-                      Text('Services: ${device.advertisementData.serviceUuids.join(", ")}'),
-                      if (device.advertisementData.manufacturerData.isNotEmpty)
-                        Text('Manufacturer: ${device.advertisementData.manufacturerData}'),
-                    ],
-                  ),
-                  isThreeLine: true,
-                  onTap: isConnecting ? null : () => connectToDevice(device.device), // Disable if connecting
+          if (connectedDevice != null && !isConnecting)
+             Expanded(
+              child: ObdCommandsPanel(),
+             )
+          else  
+            Expanded(
+              flex: 2,
+              child: ListView.builder(
+                itemCount: devices.length,
+                itemBuilder: (context, index) {
+                  final device = devices[index];
+                  return ListTile(
+                    title: Text(device.device.platformName.isEmpty
+                        ? 'Unknown Device'
+                        : device.device.platformName),
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('ID: ${device.device.remoteId}'),
+                        Text('RSSI: ${device.rssi}'),
+                        Text('Services: ${device.advertisementData.serviceUuids.join(", ")}'),
+                        if (device.advertisementData.manufacturerData.isNotEmpty)
+                          Text('Manufacturer: ${device.advertisementData.manufacturerData}'),
+                      ],
+                    ),
+                    isThreeLine: true,
+                    onTap: isConnecting ? null : () => connectToDevice(device.device), // Disable if connecting
                 );
               },
             ),

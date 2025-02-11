@@ -40,19 +40,22 @@ abstract class OBDCommand {
   }
 */
 
-  // Setter for injecting a mock ObdController (for testing)
-  static void setObdController(ObdController mockController) {
-    _obdController = mockController;
+  // Setter for injecting an ObdController 
+  static void setObdController(ObdController controller) {
+    _obdController = controller;
   }
 
   // Static instances of commands
-  static final OBDCommand lbc = _LBCCommand();
   static final OBDCommand probe = _ProbeCommand();
+  static final OBDCommand lbc = _LBCCommand();
   static final OBDCommand powerSwitch = _PowerSwitchCommand();
   static final OBDCommand gearPosition = _GearPositionCommand();
   static final OBDCommand battery12v = _12VBatteryCommand();
   static final OBDCommand odometer = _OdometerCommand();
-  
+  static final _registry = [
+    lbc, powerSwitch,gearPosition, battery12v, odometer,
+  ];  
+  static List<OBDCommand> getAllCommands() => _registry;
 
   // Command details (set by subclasses via constructor)
   final String name;

@@ -228,5 +228,11 @@ void main() {
             'hv_battery_current_2': 0,
         }));
     });
+    test('Registry contains commands after initialization', () {
+      final commands = OBDCommand.getAllCommands();
+      expect(commands.isNotEmpty, true);
+      expect(commands.length, greaterThan(0));
+    });
   }); // End of group
 } // End of main()
+
