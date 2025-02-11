@@ -8,16 +8,19 @@ setup:
 	cd nissan_leaf_app && flutter pub add http
 	cd nissan_leaf_app && flutter pub get
 
-linux:  # doesn't work due to issues with bluetooth and X inside the container. maybe it will work in a linux environment? 
-	cd nissan_leaf_app && flutter run -d linux
-
-android:
-	cd nissan_leaf_app && flutter run -d 09091FDD4007XX 
+test:
+	cd nissan_leaf_app && flutter test
 
 analyze:
 	cd nissan_leaf_app && flutter analyze | grep -v "info •"
 
-web:
+linux: test # doesn't work due to issues with bluetooth and X inside the container. maybe it will work in a linux environment? 
+	cd nissan_leaf_app && flutter run -d linux
+
+android: test
+	cd nissan_leaf_app && flutter run -d 09091FDD4007XX 
+
+web: test
 	cd nissan_leaf_app && flutter run -d web-server --web-hostname=0.0.0.0 --web-port=8080
 
 clean:

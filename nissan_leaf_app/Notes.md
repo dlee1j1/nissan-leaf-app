@@ -54,3 +54,6 @@
     - multi-frames need to be setup by AT commands send as part of the header call. The AI didn't do that part when it copied over the \_set_header command.
     - there's also flow control AT command (AT3000) or something like that that is done during initialization that was buried in the obd.py code instead of the ELM 327 code
     - not sure exactly why the single frame parsing between the PYthon code and the DART code is off by one. I can't see where that extra offset is done in python
+- 2025-02-10
+  - got the multi-frame CAN data working. Also added a testing page. Now we get the SOH and SOC data back.
+  - next step - add tests
