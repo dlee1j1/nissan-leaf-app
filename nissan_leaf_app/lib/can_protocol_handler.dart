@@ -1,5 +1,5 @@
-import 'dart:typed_data';
-import 'dart:convert';
+import 'package:simple_logger/simple_logger.dart';
+
 
 /// 
 /// Handles CAN protocol messages from vehicle OBD responses
@@ -42,14 +42,13 @@ class CANProtocolHandler {
         .map((f) => _hexStringToBytes(f)) // Convert to hex to bytes
         .toList();
 
-//    print('hexResponse: $hexResponse');
-//    print('Frames: $frames');
-
+    _log.fine('hexResponse: $hexResponse');
+    _log.fine('Frames: $frames');
 
     // Validate each frame
     for (var frame in frames) {
       if (frame.length < MIN_FRAME_LENGTH || frame.length > MAX_FRAME_LENGTH) {
-        print('Invalid frame length: $frame has length ${frame.length}');
+        _log.severe('Invalid frame length: $frame has length ${frame.length}');
         throw FormatException('CAN Frame: Invalid frame length');
       }
     }
@@ -70,7 +69,7 @@ class CANProtocolHandler {
   static List<int> _parseSingleFrame(List<int> frame) {
     var length = frame[4] & 0x0F;
     final messageData = frame.sublist(5); // not sure if this should be 5 or 4 //XXXX
-    print('Single Frame: $messageData; Length: $length');
+    _log.fine('Single Frame: $messageData; Length: $length');
     return messageData;
   }
 
@@ -90,7 +89,7 @@ class CANProtocolHandler {
       Calculation: ((0x0) << 8) + 0x20 = 32
   */
     var totalLength = ((frames[0][4] & 0x0F) << 8) + frames[0][5];
-    print('Expected Length: $totalLength');    
+    _log.fine('Expected Length: $totalLength');    
 
     // Initialize message data with first frame (FF) payload
     //   Data bytes start after PCI and length bytes which are 
@@ -120,7 +119,7 @@ class CANProtocolHandler {
       messageData.addAll(frame.sublist(5));
     }
 
-    print('Multi Frame: $messageData. Length: ${messageData.length}. Expected Length: $totalLength');
+    _log.info('Multi Frame: $messageData. Length: ${messageData.length}. Expected Length: $totalLength');
 
     // Trim to specified length
     // messageData = messageData.sublist(0, totalLength);
@@ -134,7 +133,6 @@ class CANProtocolHandler {
 
   static bool _validateSequence(List<List<int>> frames) {
     for (var i = 0; i < frames.length - 1; i++) {
-//      print('Current: ${frames[i][4] & 0x0F} Next: ${frames[i + 1][4] & 0x0F}');
       var current = frames[i][4] & 0x0F;
       var next = frames[i + 1][4] & 0x0F;
       if (next != (current + 1) % 16) {
@@ -143,6 +141,8 @@ class CANProtocolHandler {
     }
     return true;
   }
+
+  static final _log = SimpleLogger();
 }
 
 List<int> _hexStringToBytes(String hexString) {

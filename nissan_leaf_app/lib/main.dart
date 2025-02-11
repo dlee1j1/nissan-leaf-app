@@ -4,30 +4,29 @@ import 'package:permission_handler/permission_handler.dart';
 import 'obd_controller.dart';
 import 'obd_command.dart';
 import 'components/log_viewer.dart';
-import 'services/logger.dart'; // Import the Logger service
-import 'dart:async'; // Override the global `print` function
-import 'dart:convert';
+import 'package:simple_logger/simple_logger.dart';
+import 'dart:async'; 
 import 'obd_test_page.dart';
 
 const SERVICE_UUID = "0000ffe0-0000-1000-8000-00805f9b34fb";
 const CHARACTERISTIC_UUID = "0000ffe1-0000-1000-8000-00805f9b34fb";
 
+final _log = SimpleLogger();
 
 void main() {
+
+  _log.onLogged = (log, info) {
+    // Capture logs for UI here
+    LogViewer.log(log.replaceAll(RegExp(r'\[caller info not available\] '), ''));
+  };
+
   runZonedGuarded(
     () {
       runApp(const NissanLeafApp());
     },
     (error, stack) {
-      print('Error: $error\n$stack');
+      _log.severe('Error: $error\n$stack');
     },
-    zoneSpecification: ZoneSpecification(
-      print: (Zone self, ZoneDelegate parent, Zone zone, String line) {
-        parent.print(zone, line); // Print to console
-       // developer.log(line); // Add this for platform logging
-        Logger.instance.log(line); // Log to our viewer
-      },
-    ),
   );
 }
 
@@ -85,7 +84,7 @@ class _BleScanPageState extends State<BleScanPage> {
     try {
       // Check if Bluetooth is on
       if (!await FlutterBluePlus.isOn) {
-        print('Bluetooth is off'); // This will be intercepted by the overridden `print`
+        _log.info('Bluetooth is off'); 
         await FlutterBluePlus.turnOn();
       }
 
@@ -99,7 +98,7 @@ class _BleScanPageState extends State<BleScanPage> {
         });
       });
 
-      print('Starting Bluetooth scan...'); 
+      _log.info('Starting Bluetooth scan...'); 
       await FlutterBluePlus.startScan(
         timeout: const Duration(seconds: 15),
         withNames: ["OBDBLE"],
@@ -107,9 +106,9 @@ class _BleScanPageState extends State<BleScanPage> {
 
       // Wait for scan to complete
       await FlutterBluePlus.isScanning.where((val) => val == false).first;
-      print('Bluetooth scan completed.'); 
+      _log.info('Bluetooth scan completed.'); 
     } catch (e) {
-      print('Scan error: $e'); 
+      _log.warning('Scan error: $e'); 
     } finally {
       setState(() => isScanning = false);
     }
@@ -133,7 +132,7 @@ class _BleScanPageState extends State<BleScanPage> {
         await device.connect(timeout: const Duration(seconds: 5));
       } catch (e) {
         tries++;
-        print('Connection attempt ${tries} failed: $e');
+        _log.info('Connection attempt ${tries} failed: $e');
         if (tries >= MAX_RETRIES) {
           throw Exception('Failed to connect after $MAX_RETRIES attempts');
         }
@@ -142,7 +141,7 @@ class _BleScanPageState extends State<BleScanPage> {
     }
 
 
-    print('Connected to device: ${device.platformName}');
+    _log.info('Connected to device: ${device.platformName}');
     setState(() {
       connectionStatus = 'Connected. Initializing ${device.platformName}...';
       connectedDevice = device; 
@@ -150,11 +149,11 @@ class _BleScanPageState extends State<BleScanPage> {
  
     try {
       var services = await device.discoverServices();
-      print('Found ${services.length} services:');
+      _log.finest('Found ${services.length} services:');
     
       // Log all discovered services
       for (var service in services) {
-        print('Service: ${service.uuid}');
+        _log.info('Service: ${service.uuid}');
       }
       
 
@@ -162,32 +161,29 @@ class _BleScanPageState extends State<BleScanPage> {
       var targetService = services.firstWhere(
         (s) => s.uuid.toString() == SERVICE_UUID.substring(4,8),
         orElse: () {
-          print('Target service $SERVICE_UUID not found');
+          _log.warning('Target service $SERVICE_UUID not found');
           return services.first; // Return first service as fallback
         },
       );
 
-      print('Using service: ${targetService.uuid}');
+      _log.info('Using service: ${targetService.uuid}');
 
       // Get the characteristic for read/write
       var characteristic = targetService.characteristics.firstWhere(
         (c) => c.uuid.toString() == CHARACTERISTIC_UUID.substring(4,8)
       );
 
-      print('Using characteristic ${characteristic.uuid}');
+      _log.finest('Using characteristic ${characteristic.uuid}');
 
       // Create ObdController instance
       var obdController = ObdController(characteristic);
-      print('Found services - initializing odb controller...');
+      _log.info('Found services - initializing odb controller...');
       await obdController.initialize();
 
       // Send a command and get the response
       OBDCommand.setObdController(obdController);
       var response = await OBDCommand.probe.run();
-      // TODO: stop the scan if probe command doesn't return a response
 
-      response = await OBDCommand.powerSwitch.run();
-      print('Power Switch: $response');
       response = await OBDCommand.gearPosition.run();
       print('Gear Position: $response');
       response = await OBDCommand.battery12v.run(); 
@@ -214,7 +210,7 @@ class _BleScanPageState extends State<BleScanPage> {
 
 
     } catch (e) {
-      print('Connection error: $e');
+      _log.severe('Connection error: $e');
       setState(() {
         connectionStatus = 'Error: ${e.toString()}';
       });
@@ -228,14 +224,14 @@ class _BleScanPageState extends State<BleScanPage> {
   
   Future<void> disconnectDevice() async {
     if (connectedDevice != null) {
-      print('Disconnecting from device: ${connectedDevice!.platformName}...');
+      _log.info('Disconnecting from device: ${connectedDevice!.platformName}...');
       await connectedDevice!.disconnect();
       connectedDevice = null; // Clear the connected device
       setState(() {
         connectionStatus = 'Disconnected';
         batterySOC = null;
       });
-      print('Device disconnected.');
+      _log.info('Device disconnected.');
     }
   }
 
@@ -312,7 +308,7 @@ class _BleScanPageState extends State<BleScanPage> {
           // Log Viewer Section
           Expanded(
             flex: 1,
-            child: LogViewer(logs: Logger.instance.logs), // Pass logs to LogViewer
+            child: LogViewer(), // Pass logs to LogViewer
           ),
 
           // Disconnect Button

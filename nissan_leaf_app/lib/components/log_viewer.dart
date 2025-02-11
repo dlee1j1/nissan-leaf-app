@@ -1,9 +1,19 @@
 import 'package:flutter/material.dart';
 
+// 
 class LogViewer extends StatelessWidget {
-  final List<String> logs;
+  static final List<String> _logs = [];
 
-  const LogViewer({Key? key, required this.logs}) : super(key: key);
+  // Add a log message
+  static void log(String message) {
+    _logs.add(message);
+  }
+
+  static void clearLogs() {
+    _logs.clear();
+  }
+
+  const LogViewer({Key? key}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
@@ -14,9 +24,9 @@ class LogViewer extends StatelessWidget {
         borderRadius: BorderRadius.circular(8.0),
       ),
       child: ListView.builder(
-        itemCount: logs.length,
+        itemCount: _logs.length,
         itemBuilder: (context, index) {
-          return Text(logs[index]);
+          return Text(_logs[index]);
         },
       ),
     );

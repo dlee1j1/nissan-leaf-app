@@ -1,8 +1,8 @@
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'dart:convert';
 import 'dart:async';
-import 'dart:typed_data';
 import 'dart:collection';
+import 'package:simple_logger/simple_logger.dart';
 
 class ObdCommandError extends Error {
   final String command;
@@ -29,15 +29,15 @@ class ObdController {
 
   void _handleNotification(List<int> value) {
     var response = utf8.decode(value).replaceAll('\x00', '');
-    print('Received notification: $response');
+    _log.fine('Received notification: $response');
     _responseQueue.add(response);
   }
 
   Future<void> _setupNotifications() async {
-    print('Setting up notifications...');
+    _log.info('Setting up notifications...');
     await characteristic?.setNotifyValue(true);
     characteristic?.value.listen(_handleNotification);
-    print('Notifications set up.');
+    _log.info('Notifications set up.');
   }
 
 
@@ -69,7 +69,7 @@ class ObdController {
         while (_responseQueue.isEmpty) {
           // Check for timeout
           if (DateTime.now().difference(startTime) > TIMEOUT) {
-            print('Timeout waiting for response to command: $command');
+            _log.warning('Timeout waiting for response to command: $command');
             throw ObdCommandError(command, 'Timeout waiting for response');
           }
           await Future.delayed(Duration(milliseconds: 100));
@@ -78,7 +78,7 @@ class ObdController {
         // Process the response
         while (_responseQueue.isNotEmpty) {
           var chunk = _responseQueue.removeFirst();
-          print('Received chunk: $chunk');
+          _log.fine('Received chunk: $chunk');
           if (chunk.trim() == command) continue; // Skip the command echo
           if (chunk.contains(ELM_PROMPT)) {
             buffer += chunk.replaceAll(ELM_PROMPT, '').trim();
@@ -86,7 +86,7 @@ class ObdController {
           }
           buffer += chunk;
           // Debug: Print the buffer content
-          print('Buffer content: $buffer');
+          _log.info('Buffer content: $buffer');
         } 
       }  // end of ELM_PROMPT loop
 
@@ -108,16 +108,16 @@ class ObdController {
 
       // Check for "OK" if required
       if (!expectOk || response.contains('OK')) {
-        print('Command successful: $command');
+        _log.info('Command successful: $command');
         return response;
       }
 
       // If we expected "OK" but didn't get it, retry
-      print('Retrying command: $command (attempt ${retryCount + 1}/$MAX_RETRIES)');
+      _log.warning('Retrying command: $command (attempt ${retryCount + 1}/$MAX_RETRIES)');
       await Future.delayed(RETRY_DELAY);
     } // end retry loop 
 
-    print('Max retries reached for command: $command');
+    _log.severe('Max retries reached for command: $command');
     throw ObdCommandError(command, 'Max retries reached');
 
   }  // End of sendCommand()
@@ -126,7 +126,7 @@ class ObdController {
     if (_initialized) return;
   
     try {
-      print('Initializing OBD controller...');
+      _log.info('Initializing OBD controller...');
       await sendCommand('ATZ', expectOk: false);  // ATZ can return junk
       await Future.delayed(Duration(seconds: 1));
     
@@ -139,48 +139,13 @@ class ObdController {
       await sendCommand('ATFCSD300000', expectOk: true); //set flow control 
     
       _initialized = true;
-      print('OBD controller initialized.');
+      _log.info('OBD controller initialized.');
     } catch (e) {
       _initialized = false;
-      print('Initialization failed: $e');
+      _log.severe('Initialization failed: $e');
       rethrow;
     }
   }
-/*
-    Future<Map<String, dynamic>> readLBCData() async {
-      print('Reading LBC data...');
 
-      // Step 1: Set the header
-      await sendCommand('ATSH 79B', expectOk: true);
-      print('Header set to 79B');
-
-      // Step 2: Send the LBC command
-      var response = await sendCommand('022101');
-      print('Raw LBC response: $response');
-
-      // Step 3: Decode the response
-      var bytes = utf8.encode(response);
-
-      // Ensure the response is not empty
-      if (bytes.isEmpty) {
-        print('Empty LBC response, returning empty data');
-        return {};
-      }
-
-      // Extract SOC, SOH, and other data (adjust byte ranges as needed)
-      var soc = int.fromBytes(bytes.sublist(33, 37)) / 10000; // SOC in bytes 33-36
-      var soh = int.fromBytes(bytes.sublist(30, 32)) / 102.4; // SOH in bytes 30-32
-      var batteryAh = int.fromBytes(bytes.sublist(37, 40)) / 10000; // Battery capacity in bytes 37-40
-      var hvBatteryVoltage = int.fromBytes(bytes.sublist(20, 22)) / 100; // HV battery voltage in bytes 20-22
-
-      print('Parsed LBC data: SOC=$soc%, SOH=$soh%, BatteryAh=$batteryAh, HVVoltage=$hvBatteryVoltage');
-
-      return {
-        'state_of_charge': soc,
-        'hv_battery_health': soh,
-        'hv_battery_Ah': batteryAh,
-        'hv_battery_voltage': hvBatteryVoltage,
-      };
-    } // End of readLBCData()
-  */    
+  static final _log = SimpleLogger();
 } // End of OBDController class

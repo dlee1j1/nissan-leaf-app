@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'obd_command.dart';
 import 'mock_obd_controller.dart';
 import 'components/log_viewer.dart';
-import 'services/logger.dart';
 
 class ObdTestPage extends StatefulWidget {
   @override
@@ -78,6 +77,7 @@ Odometer: $odometerResult
     setState(() {
       _result = '';
     });
+    LogViewer.clearLogs();
   }
 
   @override
@@ -126,7 +126,7 @@ Odometer: $odometerResult
             ),
             Expanded(
             flex: 1,
-            child: LogViewer(logs: Logger.instance.logs),
+            child: LogViewer(),
             ),            
           ],
         ),

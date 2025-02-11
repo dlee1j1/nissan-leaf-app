@@ -1,7 +1,6 @@
 import 'obd_controller.dart';
-import 'dart:typed_data';
-import 'dart:convert';
 import 'can_protocol_handler.dart';
+import 'package:simple_logger/simple_logger.dart';
 
 /// Abstract base class for OBD (On-Board Diagnostics) commands.
 /// 
@@ -84,12 +83,12 @@ abstract class OBDCommand {
     final response = await _obdController!.sendCommand(command, expectOk: false);
     // Step 3: validation checks 
     if (response.isEmpty) {
-        print('No valid OBD Messages returned');
+        _log.warning('No valid OBD Messages returned');
         return {};
     }
 
     if (response == 'NO DATA' || response == 'CAN ERROR') {
-        print('Vehicle not responding');
+        _log.severe('Vehicle not responding');
         return {};
     }
 
@@ -102,6 +101,7 @@ abstract class OBDCommand {
 
   // Decode the response (must be implemented by subclasses)
   Map<String, dynamic> decode(List<int> response);
+  static final _log = SimpleLogger();
 }
 
 
@@ -132,14 +132,11 @@ class _LBCCommand extends OBDCommand {
     int stateOfHealth;
     int batteryAh;
 
-    print('data length = ${data.length}');
     if (data.length > 41) {
-        print ('data length > 41');
         stateOfCharge = extractInt(data, 33, 36) ~/ 10000;
         stateOfHealth = extractInt(data, 30, 32) ~/ 102.4;
         batteryAh = extractInt(data, 37, 40) ~/ 10000;
     } else {
-        print ('data length <= 41');
         stateOfCharge = extractInt(data, 31, 34) ~/ 10000;
         stateOfHealth = extractInt(data, 28, 30) ~/ 102.4;
         batteryAh = extractInt(data, 34, 37) ~/ 10000;
@@ -263,8 +260,3 @@ int extractInt(List<int> bytes, int start, int end) {
   }
   return result;
 }
-
-
-
-
-
