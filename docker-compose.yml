@@ -19,13 +19,16 @@ services:
     devices:
       - "/dev/bus/usb:/dev/bus/usb" # For physical device debugging
 
+    ports:
+      - 8080:8080
+
     environment:
       - DISPLAY=host.docker.internal:0
       - HISTFILE=/commandhistory/.bash_history
       
     privileged: true
 
-    network_mode: "host" 
+#    network_mode: "host" 
     tty: true           
     stdin_open: true    
 
