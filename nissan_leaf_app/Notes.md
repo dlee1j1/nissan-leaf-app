@@ -55,5 +55,33 @@
     - there's also flow control AT command (AT3000) or something like that that is done during initialization that was buried in the obd.py code instead of the ELM 327 code
     - not sure exactly why the single frame parsing between the PYthon code and the DART code is off by one. I can't see where that extra offset is done in python
 - 2025-02-10
+
   - got the multi-frame CAN data working. Also added a testing page. Now we get the SOH and SOC data back.
   - next step - add tests
+
+- 2025-02-11
+  - added tests
+  - finished copying over all the commands
+  - fixed up the UI to display everything
+  - SOC seems a little off but close = the car is showing 100% but we are reading 93%
+  - pressure readings are wrong
+    - 7 63 04 62 0E 28 00 - rl
+    - 7 63 04 62 0E 27 00 - rr
+    - 7 63 04 62 0E 26 00 - fl
+    - 7 63 04 62 0E 25 00 - fr
+  - range remaining is off
+    - 7 63 10 0D 62 0E 24 00 18 42
+    - 7 63 21 08 80 02 00 00 00 00
+      [62 0E 24 00 18 42 08 80 02 ]
+      Byte Pair Analysis (overlapping):
+      ***
+      Bytes | Unsigned | Signed | Binary
+      ***
+      62 0E | 25102 | 25102 | 0110001000001110
+      0E 24 | 3620 | 3620 | 0000111000100100
+      24 00 | 9216 | 9216 | 0010010000000000
+      00 18 | 24 | 24 | 0000000000011000
+      18 42 | 6210 | 6210 | 0001100001000010
+      42 08 | 16904 | 16904 | 0100001000001000
+      08 80 | 2176 | 2176 | 0000100010000000
+      80 02 | 32770 | -32766 | 1000000000000010
