@@ -1,7 +1,18 @@
 .PHONY: setup run clean
 
 # Flutter section - this stuff runs inside the container
-setup:
+
+setup:	
+# install the flutter SDK if it's not there
+	if [ ! -f "/opt/flutter/bin/flutter" ]; then \
+	  echo "Flutter not found, installing..."; \
+	  git clone https://github.com/flutter/flutter.git /opt/flutter && \
+	  cd /opt/flutter && git checkout stable && sleep 1 &&\
+	  /opt/flutter/bin/flutter doctor; \
+	else \
+	  echo "Flutter already installed."; \
+	fi
+	ln -s /opt/android-tools /opt/flutter/bin/cache/artifacts/engine
 	cd nissan_leaf_app && flutter config --enable-linux-desktop
 	cd nissan_leaf_app && flutter pub add flutter_blue_plus
 	cd nissan_leaf_app && flutter pub add sqflite
@@ -27,7 +38,7 @@ clean:
 	cd nissan_leaf_app && flutter clean
 
 # Docker stuff - this stuff runs outside the container
-docker-build: .docker-build-stamp
+docker-build: .docker-build-stamp 
 
 .docker-build-stamp: Dockerfile
 	docker-compose build 

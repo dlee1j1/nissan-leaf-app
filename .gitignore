@@ -7,6 +7,8 @@
 .pub/
 build/
 *.iml
+.flutter/
+./opt
 
 # IDE specific
 .idea/

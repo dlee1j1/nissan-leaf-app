@@ -1,13 +1,47 @@
 {
-    "dart.flutterSdkPath": "./.docker/flutter",
-    "terminal.integrated.defaultProfile.windows": "Flutter Dev",
+    // Dart/Flutter SDK paths (pointing to your mounted container SDK)
+    "dart.sdkPath": "/opt/flutter/bin/cache/dart-sdk",
+    "dart.flutterSdkPath": "/opt/flutter",
+    // Analysis settings
+    "dart.analyzeAngularTemplates": false,
+    "dart.analysisExcludedFolders": [
+        ".dart_tool",
+        "build",
+        ".devcontainer",
+        ".github"
+    ],
+    // Formatting settings
+    "dart.lineLength": 100,
+    "editor.formatOnSave": true,
+    "editor.formatOnType": true,
+    "[dart]": {
+        "editor.defaultFormatter": "Dart-Code.dart-code",
+        "editor.formatOnSave": true,
+        "editor.formatOnType": true,
+        "editor.rulers": [
+            100
+        ],
+        "editor.selectionHighlight": false,
+        "editor.suggest.snippetsPreventQuickSuggestions": false,
+        "editor.suggestSelection": "first",
+        "editor.tabCompletion": "onlySnippets",
+        "editor.wordBasedSuggestions": "off"
+    },
+    // Debug settings
+    "debug.openDebug": "openOnDebugBreak",
+    // Terminal settings for both WSL and Windows access
     "terminal.integrated.profiles.windows": {
-        "Flutter Dev": {
-            "path": "cmd.exe",
-            "args": ["/k", "docker-compose up -d && docker-compose exec flutter_dev bash"]
+        "PowerShell": {
+            "source": "PowerShell",
+            "icon": "terminal-powershell"
         }
     },
+    "terminal.integrated.defaultProfile.windows": "PowerShell",
+    // Optional file association
+    "files.associations": {
+        "*.dart": "dart"
+    }
+
     "cody.chat.preInstruction": "project is to leverage python code (copied into the reference directory) that talks to OBD dongle and make it work for android and IOS app. The app should store the data locally then sync to Home Assistant when it sees the instance",
     "makefile.configureOnOpen": false
 }
-

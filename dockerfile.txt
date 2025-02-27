@@ -39,6 +39,12 @@ RUN mkdir -p ~/.android && \
     yes | sdkmanager --licenses && \
     sdkmanager "platform-tools" "platforms;android-33" "build-tools;33.0.0"
 
+# Download Flutter SDK
+RUN git clone https://github.com/flutter/flutter.git $FLUTTER_HOME && \
+    cd $FLUTTER_HOME && \
+    git checkout stable && \
+    flutter doctor
+
 # Install bluetooth tools for Android
 RUN apt-get install -y \
     android-sdk-platform-tools-common \
