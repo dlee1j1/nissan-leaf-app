@@ -5,17 +5,15 @@ services:
       # Local files mapped 
       - .:/app
       - ./.devcontainer/etc/udev/rules.d:/etc/udev/rules.d # For physical device rules, specifically 51-android.rules
-      - /opt/flutter:/opt/flutter  # flutter SDK so we can do syntax highlighting in VSCode
-        # Docker cached volumes
-      - flutter-cache:/root/.pub-cache
+      - /opt/flutter:/opt/flutter # flutter SDK so we can do syntax highlighting in VSCode
+      - ${PUB_CACHE}:${PUB_CACHE} # Docker cached volumes
       - flutter-build:/app/build
-      - gradle-cache:/root/.gradle    # Cache Gradle dependencies
-      - android-cache:/root/.android  # Cache Android SDK downloads
-      - build-cache:/app/.dart_tool   # Cache Dart build artifacts
+      - gradle-cache:/root/.gradle # Cache Gradle dependencies
+      - android-cache:/root/.android # Cache Android SDK downloads
       - android-tools:/opt/android-tools
       - android-sdk-linux:/opt/android-sdk-linux
       - bash-history:/commandhistory
-    
+
     devices:
       - "/dev/bus/usb:/dev/bus/usb" # For physical device debugging
 
@@ -25,21 +23,19 @@ services:
     environment:
       - DISPLAY=host.docker.internal:0
       - HISTFILE=/commandhistory/.bash_history
-      
+      - PUB_CACHE=${PUB_CACHE}
+
     privileged: true
 
-#    network_mode: "host" 
-    tty: true           
-    stdin_open: true    
+    #    network_mode: "host" 
+    tty: true
+    stdin_open: true
 
 # Volumes managed by Docker that persists between container runs
 volumes:
-  flutter-cache:
   flutter-build:
   gradle-cache:
-  android-cache: 
-  build-cache:
+  android-cache:
   android-tools:
   android-sdk-linux:
   bash-history:
-          

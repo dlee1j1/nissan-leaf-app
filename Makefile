@@ -12,7 +12,8 @@ setup:
 	else \
 	  echo "Flutter already installed."; \
 	fi
-	ln -s /opt/android-tools /opt/flutter/bin/cache/artifacts/engine
+	ln -sf /opt/android-tools /opt/flutter/bin/cache/artifacts/engine
+	ln -sf nissan_leaf_app/.dart_tool .
 	cd nissan_leaf_app && flutter config --enable-linux-desktop
 	cd nissan_leaf_app && flutter pub add flutter_blue_plus
 	cd nissan_leaf_app && flutter pub add sqflite
