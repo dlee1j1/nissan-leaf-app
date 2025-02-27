@@ -1,0 +1,13 @@
+{
+    "dart.flutterSdkPath": "./.docker/flutter",
+    "terminal.integrated.defaultProfile.windows": "Flutter Dev",
+    "terminal.integrated.profiles.windows": {
+        "Flutter Dev": {
+            "path": "cmd.exe",
+            "args": ["/k", "docker-compose up -d && docker-compose exec flutter_dev bash"]
+        }
+    },
+    "cody.chat.preInstruction": "project is to leverage python code (copied into the reference directory) that talks to OBD dongle and make it work for android and IOS app. The app should store the data locally then sync to Home Assistant when it sees the instance",
+    "makefile.configureOnOpen": false
+}
+

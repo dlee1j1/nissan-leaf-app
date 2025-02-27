@@ -10,7 +10,7 @@ build/
 
 # IDE specific
 .idea/
-.vscode/
+# .vscode/
 *.iws
 *.ipr
 
