@@ -5,7 +5,8 @@ services:
       # Local files mapped 
       - .:/app
       - ./.devcontainer/etc/udev/rules.d:/etc/udev/rules.d # For physical device rules, specifically 51-android.rules
-      # Docker cached volumes
+      - /opt/flutter:/opt/flutter_host  # flutter SDK so we can do syntax highlighting in VSCode
+        # Docker cached volumes
       - flutter-cache:/root/.pub-cache
       - flutter-build:/app/build
       - gradle-cache:/root/.gradle    # Cache Gradle dependencies
