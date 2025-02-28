@@ -40,8 +40,7 @@
     // Optional file association
     "files.associations": {
         "*.dart": "dart"
-    }
-
+    },
     "cody.chat.preInstruction": "project is to leverage python code (copied into the reference directory) that talks to OBD dongle and make it work for android and IOS app. The app should store the data locally then sync to Home Assistant when it sees the instance",
     "makefile.configureOnOpen": false
 }

@@ -104,7 +104,7 @@ class _BleScanPageState extends State<BleScanPage> {
         setState(() {
           // Update map with latest results, overwriting existing entries
           for (var result in results) {
-            deviceMap[result.device.remoteId.id] = result;
+            deviceMap[result.device.remoteId.str] = result;
           }
         });
       });

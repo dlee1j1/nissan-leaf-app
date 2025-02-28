@@ -40,7 +40,7 @@ class CANProtocolHandler {
         .split(RegExp(r'[\n\r]'))
         .map((f) => f.trim()) // Remove leading/trailing whitespace
         .where((f) => f.isNotEmpty) // Remove empty lines
-        .map((f) => "00000" + f) // Always pad for Protocol 6
+        .map((f) => "00000$f") // Always pad for Protocol 6
         .map((f) => _hexStringToBytes(f)) // Convert to hex to bytes
         .toList();
 

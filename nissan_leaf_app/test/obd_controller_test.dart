@@ -1,6 +1,6 @@
 import 'package:test/test.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
-import '../lib/obd_controller.dart';
+import 'package:nissan_leaf_app/obd_controller.dart';
 import 'dart:convert';
 import 'dart:async';
 
@@ -8,29 +8,25 @@ class MockBluetoothCharacteristic extends BluetoothCharacteristic {
   final _controller = StreamController<List<int>>.broadcast();
   List<List<int>> writtenValues = [];
   Function(List<int>)? responseHandler;
-  
-  MockBluetoothCharacteristic() : super(
-    remoteId: DeviceIdentifier("mock_device"),
-    serviceUuid: Guid("00000000-0000-0000-0000-000000000000"),
-    characteristicUuid: Guid("00000000-0000-0000-0000-000000000000")
-  );
-  
+
+  MockBluetoothCharacteristic()
+      : super(
+            remoteId: DeviceIdentifier("mock_device"),
+            serviceUuid: Guid("00000000-0000-0000-0000-000000000000"),
+            characteristicUuid: Guid("00000000-0000-0000-0000-000000000000"));
+
   @override
   Stream<List<int>> get value => _controller.stream;
-  
+
   void addResponse(String response) {
     _controller.add(utf8.encode(response));
   }
 
   @override
-  Future<void> write(
-    List<int> value, {
-    bool withoutResponse = false,
-    bool allowLongWrite = false,
-    int timeout = 15
-  }) async {
+  Future<void> write(List<int> value,
+      {bool withoutResponse = false, bool allowLongWrite = false, int timeout = 15}) async {
     writtenValues.add(value);
-    
+
     // Use response handler if set, otherwise default behavior
     if (responseHandler != null) {
       Future.delayed(Duration(milliseconds: 10)).then((_) => responseHandler!(value));
@@ -47,11 +43,8 @@ class MockBluetoothCharacteristic extends BluetoothCharacteristic {
   }
 
   @override
-  Future<bool> setNotifyValue(
-    bool notify, {
-    int timeout = 15,
-    bool forceIndications = false
-  }) async {
+  Future<bool> setNotifyValue(bool notify,
+      {int timeout = 15, bool forceIndications = false}) async {
     return Future.value(true);
   }
 }
@@ -73,12 +66,9 @@ void main() {
 
     test('initialization sequence completes successfully', () async {
       await controller.initialize();
-      
+
       expect(mockCharacteristic.writtenValues.length, 8);
-      expect(
-        utf8.decode(mockCharacteristic.writtenValues[0]), 
-        contains('ATZ')
-      );
+      expect(utf8.decode(mockCharacteristic.writtenValues[0]), contains('ATZ'));
     });
 
     test('sendCommand handles command echo correctly', () async {
@@ -89,7 +79,7 @@ void main() {
 
     test('sendCommand retries on non-OK response when expectOk is true', () async {
       var attemptCount = 0;
-      
+
       mockCharacteristic.responseHandler = (value) {
         attemptCount++;
         if (attemptCount < 3) {
