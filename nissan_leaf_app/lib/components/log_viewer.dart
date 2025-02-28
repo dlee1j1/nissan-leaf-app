@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-// 
+//
 class LogViewer extends StatelessWidget {
   static final List<String> _logs = [];
 
@@ -13,7 +13,7 @@ class LogViewer extends StatelessWidget {
     _logs.clear();
   }
 
-  const LogViewer({Key? key}) : super(key: key);
+  const LogViewer({super.key});
 
   @override
   Widget build(BuildContext context) {

@@ -4,7 +4,10 @@ import 'mock_obd_controller.dart';
 import 'components/log_viewer.dart';
 
 class ObdTestPage extends StatefulWidget {
+  const ObdTestPage({super.key});
+
   @override
+  // ignore: library_private_types_in_public_api
   _ObdTestPageState createState() => _ObdTestPageState();
 }
 
@@ -40,14 +43,14 @@ class _ObdTestPageState extends State<ObdTestPage> {
 
   void _runCommand() async {
     final response = _controller.text.trim();
-    
+
     // Set up mock controller with input response
     OBDCommand.setObdController(MockObdController(response));
 
     try {
       // Run all commands
       final lbcResult = await OBDCommand.lbc.run();
- /*     final probeResult = await OBDCommand.probe.run();
+      /*     final probeResult = await OBDCommand.probe.run();
       final powerResult = await OBDCommand.powerSwitch.run();
       final gearResult = await OBDCommand.gearPosition.run();
       final batteryResult = await OBDCommand.battery12v.run();
@@ -125,9 +128,9 @@ Odometer: $odometerResult
               ),
             ),
             Expanded(
-            flex: 1,
-            child: LogViewer(),
-            ),            
+              flex: 1,
+              child: LogViewer(),
+            ),
           ],
         ),
       ),

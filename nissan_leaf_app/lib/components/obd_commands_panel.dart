@@ -1,8 +1,12 @@
+// ignore_for_file: library_private_types_in_public_api
+
 import 'package:flutter/material.dart';
 import '../obd_command.dart';
 import 'package:simple_logger/simple_logger.dart';
 
 class ObdCommandsPanel extends StatefulWidget {
+  const ObdCommandsPanel({super.key});
+
   @override
   _ObdCommandsPanelState createState() => _ObdCommandsPanelState();
 }
@@ -23,7 +27,7 @@ class _ObdCommandsPanelState extends State<ObdCommandsPanel> {
 
   Future<void> refreshAllCommands() async {
     setState(() => isRefreshing = true);
-    
+
     final commands = OBDCommand.getAllCommands();
 
     for (var command in commands) {
@@ -55,15 +59,15 @@ class _ObdCommandsPanelState extends State<ObdCommandsPanel> {
             ),
             Divider(),
             ...values.entries.map((e) => Padding(
-              padding: EdgeInsets.symmetric(vertical: 4),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(e.key.replaceAll('_', ' ').toUpperCase()),
-                  Text(e.value.toString()),
-                ],
-              ),
-            )),
+                  padding: EdgeInsets.symmetric(vertical: 4),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(e.key.replaceAll('_', ' ').toUpperCase()),
+                      Text(e.value.toString()),
+                    ],
+                  ),
+                )),
           ],
         ),
       ),
@@ -90,8 +94,8 @@ class _ObdCommandsPanelState extends State<ObdCommandsPanel> {
               itemCount: commandResults.length,
               itemBuilder: (context, index) {
                 final entry = commandResults.entries.elementAt(index);
-                return _buildResultCard(entry.key, 
-                    entry.value is Map ? entry.value : {'value': entry.value});
+                return _buildResultCard(
+                    entry.key, entry.value is Map ? entry.value : {'value': entry.value});
               },
             ),
           ),

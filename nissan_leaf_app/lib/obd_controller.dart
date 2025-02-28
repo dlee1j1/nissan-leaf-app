@@ -7,9 +7,9 @@ import 'package:simple_logger/simple_logger.dart';
 class ObdCommandError extends Error {
   final String command;
   final String response;
-  
+
   ObdCommandError(this.command, this.response);
-  
+
   @override
   String toString() => 'OBD Command Error: $command returned $response';
 }
@@ -36,39 +36,40 @@ class ObdController {
   Future<void> _setupNotifications() async {
     _log.info('Setting up notifications...');
     await characteristic?.setNotifyValue(true);
-    characteristic?.value.listen(_handleNotification);
+    characteristic?.lastValueStream.listen(_handleNotification);
     _log.info('Notifications set up.');
   }
 
-
   Future<String> sendCommand(String command, {bool expectOk = false}) async {
-
     // Inner function to send the command
     //  this function sends the command, waits for >, cleans out the > and returns the response
     //  OK handling and retries are done by the outer function
-    Future<String> _sendCommandInner(String command) async {
-      final ELM_PROMPT = '>';
-      final TIMEOUT = Duration(seconds: 5);
+    Future<String> sendCommandInner(String command) async {
+      // ignore: constant_identifier_names
+      const ELM_PROMPT = '>';
+      final timeOut = Duration(seconds: 5);
 
       var buffer = '';
       var startTime = DateTime.now();
 
-      await Future.delayed(Duration(milliseconds: 100)); // Wait for the notification to be processed
+      await Future.delayed(
+          Duration(milliseconds: 100)); // Wait for the notification to be processed
       _responseQueue.clear(); // Clear the queue
 
-        // Send the command
-      print('Sending command: $command');
-      await characteristic?.write(utf8.encode(command + '\r'));
+      // Send the command
+      _log.info('Sending command: $command');
+      await characteristic?.write(utf8.encode('$command\r'));
 
       // Wait for the response
-      print('Waiting for response...');
+      _log.info('Waiting for response...');
 
-      while (true) { // while we don't see the ELM_PROMPT
+      while (true) {
+        // while we don't see the ELM_PROMPT
 
-        // Wait for a response  
+        // Wait for a response
         while (_responseQueue.isEmpty) {
           // Check for timeout
-          if (DateTime.now().difference(startTime) > TIMEOUT) {
+          if (DateTime.now().difference(startTime) > timeOut) {
             _log.warning('Timeout waiting for response to command: $command');
             throw ObdCommandError(command, 'Timeout waiting for response');
           }
@@ -87,24 +88,23 @@ class ObdController {
           buffer += chunk;
           // Debug: Print the buffer content
           _log.info('Buffer content: $buffer');
-        } 
-      }  // end of ELM_PROMPT loop
+        }
+      } // end of ELM_PROMPT loop
 
       // we should never get here
-      throw Exception('BUG BUG BUG - should never get here');
-
-    } // End of _sendCommandInner()
-
+      // ignore: dead_code
+      throw Exception("BUG BUG BUG - should never get here");
+    } // End of sendCommandInner()
 
     // ----
     // main body of sendCommand() here. Really most of the work is done in _sendCommandInner()
     // But we do retries and "OK" checking here
-    final RETRY_DELAY = Duration(milliseconds: 100);
-    final MAX_RETRIES = 3;
-  
-    for (var retryCount = 0; retryCount < MAX_RETRIES; retryCount++) {
+    final retryDelay = Duration(milliseconds: 100);
+    final maxRetries = 3;
+
+    for (var retryCount = 0; retryCount < maxRetries; retryCount++) {
       // Send the command
-      var response = await _sendCommandInner(command);
+      var response = await sendCommandInner(command);
 
       // Check for "OK" if required
       if (!expectOk || response.contains('OK')) {
@@ -113,31 +113,30 @@ class ObdController {
       }
 
       // If we expected "OK" but didn't get it, retry
-      _log.warning('Retrying command: $command (attempt ${retryCount + 1}/$MAX_RETRIES)');
-      await Future.delayed(RETRY_DELAY);
-    } // end retry loop 
+      _log.warning('Retrying command: $command (attempt ${retryCount + 1}/$maxRetries)');
+      await Future.delayed(retryDelay);
+    } // end retry loop
 
     _log.severe('Max retries reached for command: $command');
     throw ObdCommandError(command, 'Max retries reached');
-
-  }  // End of sendCommand()
+  } // End of sendCommand()
 
   Future<void> initialize() async {
     if (_initialized) return;
-  
+
     try {
       _log.info('Initializing OBD controller...');
-      await sendCommand('ATZ', expectOk: false);  // ATZ can return junk
+      await sendCommand('ATZ', expectOk: false); // ATZ can return junk
       await Future.delayed(Duration(seconds: 1));
-    
-      await sendCommand('ATE0', expectOk: true);  // Echo off
+
+      await sendCommand('ATE0', expectOk: true); // Echo off
       await sendCommand('ATSP6', expectOk: true); // Protocol 6
-      await sendCommand('ATH1', expectOk: true);  // Headers on
-      await sendCommand('ATL0', expectOk: true);  // Linefeeds off
-      await sendCommand('ATS0', expectOk: true);  // Spaces off
+      await sendCommand('ATH1', expectOk: true); // Headers on
+      await sendCommand('ATL0', expectOk: true); // Linefeeds off
+      await sendCommand('ATS0', expectOk: true); // Spaces off
       await sendCommand('ATCAF0', expectOk: true); // CAN formatting off
-      await sendCommand('ATFCSD300000', expectOk: true); //set flow control 
-    
+      await sendCommand('ATFCSD300000', expectOk: true); //set flow control
+
       _initialized = true;
       _log.info('OBD controller initialized.');
     } catch (e) {
