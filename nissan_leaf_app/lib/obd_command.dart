@@ -3,23 +3,23 @@ import 'can_protocol_handler.dart';
 import 'package:simple_logger/simple_logger.dart';
 
 /// Abstract base class for OBD (On-Board Diagnostics) commands.
-/// 
+///
 /// This class provides a common interface for sending OBD commands to a vehicle's
 /// on-board computer and decoding the responses. Subclasses of `OBDCommand` define
 /// the specific details of each command, such as the command string, header, and
 /// how to decode the response.
 ///
-/// Usage: 
+/// Usage:
 ///   1. Initialize the `ObdController` by calling `OBDCommand.initialize(ODBController)`.
 ///   2. Use the `run()` method on specific commands, e.g.,
 ///      `var response = await OBDCommand.lbc.run();` // Send the Li-ion Battery Controller command
-/// 
+///
 /// *Creating a new OBD command:*
-/// 
+///
 /// To create a new OBD command, subclass `OBDCommand` and implement the `decode()` method
 /// to parse the response from the vehicle and return the relevant data as a `Map<String, dynamic>`.
 ///
-/// Subclasses should add a static instance of themselves to the end of the `OBDCommand` class. 
+/// Subclasses should add a static instance of themselves to the end of the `OBDCommand` class.
 ///
 /// Clients can then use these instances to send commands to the vehicle. For example:
 ///    var response = await OBDCommand.lbc.run(); // Send the Li-ion Battery Controller command
@@ -40,7 +40,7 @@ abstract class OBDCommand {
   }
 */
 
-  // Setter for injecting an ObdController 
+  // Setter for injecting an ObdController
   static void setObdController(ObdController controller) {
     _obdController = controller;
   }
@@ -76,17 +76,36 @@ abstract class OBDCommand {
   static final OBDCommand tpRl = _TpRlCommand();
   static final OBDCommand rangeRemaining = _RangeRemainingCommand();
 
-
   static final _registry = [
-    lbc, rangeRemaining, odometer, l1l2Charges, quickCharges, plugState, chargeMode,
-    tpFr, tpFl, tpRr, tpRl, 
-    battery12v, bat12vCurrent,
-    gearPosition, speed, rpm, motorPower, ecoMode, ePedalMode,   
-    ambientTemp, estimatedAcPower,
-    estimatedPtcPower, auxPower, acPower, 
-    obcOutPower, acOn, rearHeater,  
+    lbc,
+    rangeRemaining,
+    odometer,
+    l1l2Charges,
+    quickCharges,
+    plugState,
+    chargeMode,
+    tpFr,
+    tpFl,
+    tpRr,
+    tpRl,
+    battery12v,
+    bat12vCurrent,
+    gearPosition,
+    speed,
+    rpm,
+    motorPower,
+    ecoMode,
+    ePedalMode,
+    ambientTemp,
+    estimatedAcPower,
+    estimatedPtcPower,
+    auxPower,
+    acPower,
+    obcOutPower,
+    acOn,
+    rearHeater,
     powerSwitch,
-  ];  
+  ];
   static List<OBDCommand> getAllCommands() => _registry;
 
   // Command details (set by subclasses via constructor)
@@ -116,15 +135,15 @@ abstract class OBDCommand {
 
     // Step 2: Send the OBD command
     final response = await _obdController!.sendCommand(command, expectOk: false);
-    // Step 3: validation checks 
+    // Step 3: validation checks
     if (response.isEmpty) {
-        _log.warning('No valid OBD Messages returned');
-        return {};
+      _log.warning('No valid OBD Messages returned');
+      return {};
     }
 
     if (response == 'NO DATA' || response == 'CAN ERROR') {
-        _log.severe('Vehicle not responding');
-        return {};
+      _log.severe('Vehicle not responding');
+      return {};
     }
 
     // Step 4: Parse CAN protocol only for vehicle commands
@@ -138,7 +157,6 @@ abstract class OBDCommand {
   Map<String, dynamic> decode(List<int> response);
   static final _log = SimpleLogger();
 }
-
 
 class _LBCCommand extends OBDCommand {
   _LBCCommand()
@@ -154,13 +172,13 @@ class _LBCCommand extends OBDCommand {
 
     var hvBatteryCurrent1 = extractInt(data, 2, 6);
     var hvBatteryCurrent2 = extractInt(data, 8, 12);
-    
+
     // Handle signed values
     if (hvBatteryCurrent1 & 0x8000000 == 0x8000000) {
-        hvBatteryCurrent1 |= -0x100000000;
+      hvBatteryCurrent1 |= -0x100000000;
     }
     if (hvBatteryCurrent2 & 0x8000000 == 0x8000000) {
-        hvBatteryCurrent2 |= -0x100000000;
+      hvBatteryCurrent2 |= -0x100000000;
     }
 
     int stateOfCharge;
@@ -168,28 +186,28 @@ class _LBCCommand extends OBDCommand {
     int batteryAh;
 
     if (data.length > 41) {
-        stateOfCharge = extractInt(data, 33, 36) ~/ 10000;
-        stateOfHealth = extractInt(data, 30, 32) ~/ 102.4;
-        batteryAh = extractInt(data, 37, 40) ~/ 10000;
+      stateOfCharge = extractInt(data, 33, 36) ~/ 10000;
+      stateOfHealth = extractInt(data, 30, 32) ~/ 102.4;
+      batteryAh = extractInt(data, 37, 40) ~/ 10000;
     } else {
-        stateOfCharge = extractInt(data, 31, 34) ~/ 10000;
-        stateOfHealth = extractInt(data, 28, 30) ~/ 102.4;
-        batteryAh = extractInt(data, 34, 37) ~/ 10000;
+      stateOfCharge = extractInt(data, 31, 34) ~/ 10000;
+      stateOfHealth = extractInt(data, 28, 30) ~/ 102.4;
+      batteryAh = extractInt(data, 34, 37) ~/ 10000;
     }
 
     return {
-        'state_of_charge': stateOfCharge,
-        'hv_battery_health': stateOfHealth,
-        'hv_battery_Ah': batteryAh,
-        'hv_battery_current_1': hvBatteryCurrent1 ~/ 1024,
-        'hv_battery_current_2': hvBatteryCurrent2 ~/ 1024,
-        'hv_battery_voltage': extractInt(data, 20, 22) ~/ 100,
+      'state_of_charge': stateOfCharge,
+      'hv_battery_health': stateOfHealth,
+      'hv_battery_Ah': batteryAh,
+      'hv_battery_current_1': hvBatteryCurrent1 ~/ 1024,
+      'hv_battery_current_2': hvBatteryCurrent2 ~/ 1024,
+      'hv_battery_voltage': extractInt(data, 20, 22) ~/ 100,
     };
   }
 }
 
-/// Probe command - it's a mystery command that we use to probe the vehicle for OBD data. 
-/// if it returns an error, then we know the rest of the data will not work as expected. 
+/// Probe command - it's a mystery command that we use to probe the vehicle for OBD data.
+/// if it returns an error, then we know the rest of the data will not work as expected.
 class _ProbeCommand extends OBDCommand {
   _ProbeCommand()
       : super(
@@ -237,17 +255,29 @@ class _GearPositionCommand extends OBDCommand {
   Map<String, dynamic> decode(List<int> data) {
     String position;
     switch (data[3]) {
-      case 1: position = "Park"; break;
-      case 2: position = "Reverse"; break;
-      case 3: position = "Neutral"; break;
-      case 4: position = "Drive"; break;
-      case 5: position = "Eco"; break;
-      default: position = "Unknown";
+      case 1:
+        position = "Park";
+        break;
+      case 2:
+        position = "Reverse";
+        break;
+      case 3:
+        position = "Neutral";
+        break;
+      case 4:
+        position = "Drive";
+        break;
+      case 5:
+        position = "Eco";
+        break;
+      default:
+        position = "Unknown";
     }
     return {'gear_position': position};
   }
 }
 
+// ignore: camel_case_types
 class _12VBatteryCommand extends OBDCommand {
   _12VBatteryCommand()
       : super(
@@ -282,6 +312,7 @@ class _OdometerCommand extends OBDCommand {
   }
 }
 
+// ignore: camel_case_types
 class _12VBatteryCurrentCommand extends OBDCommand {
   _12VBatteryCurrentCommand()
       : super(
@@ -431,10 +462,17 @@ class _PlugStateCommand extends OBDCommand {
   Map<String, dynamic> decode(List<int> data) {
     String state;
     switch (data[3]) {
-      case 0: state = "Not plugged"; break;
-      case 1: state = "Partial plugged"; break;
-      case 2: state = "Plugged"; break;
-      default: state = "Unknown";
+      case 0:
+        state = "Not plugged";
+        break;
+      case 1:
+        state = "Partial plugged";
+        break;
+      case 2:
+        state = "Plugged";
+        break;
+      default:
+        state = "Unknown";
     }
     return {'plug_state': state};
   }
@@ -453,11 +491,20 @@ class _ChargeModeCommand extends OBDCommand {
   Map<String, dynamic> decode(List<int> data) {
     String mode;
     switch (data[3]) {
-      case 0: mode = "Not charging"; break;
-      case 1: mode = "L1 charging"; break;
-      case 2: mode = "L2 charging"; break;
-      case 3: mode = "L3 charging"; break;
-      default: mode = "Unknown";
+      case 0:
+        mode = "Not charging";
+        break;
+      case 1:
+        mode = "L1 charging";
+        break;
+      case 2:
+        mode = "L2 charging";
+        break;
+      case 3:
+        mode = "L3 charging";
+        break;
+      default:
+        mode = "Unknown";
     }
     return {'charge_mode': mode};
   }
@@ -534,7 +581,7 @@ class _SpeedCommand extends OBDCommand {
 class _AcOnCommand extends OBDCommand {
   _AcOnCommand()
       : super(
-          name: 'ac_on', 
+          name: 'ac_on',
           description: 'AC status',
           command: '03221106',
           header: '797',
