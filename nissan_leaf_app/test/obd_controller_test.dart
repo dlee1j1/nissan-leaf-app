@@ -16,7 +16,7 @@ class MockBluetoothCharacteristic extends BluetoothCharacteristic {
             characteristicUuid: Guid("00000000-0000-0000-0000-000000000000"));
 
   @override
-  Stream<List<int>> get value => _controller.stream;
+  Stream<List<int>> get lastValueStream => _controller.stream;
 
   void addResponse(String response) {
     _controller.add(utf8.encode(response));
