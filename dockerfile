@@ -6,6 +6,10 @@ ENV ANDROID_SDK_ROOT=/opt/android-sdk-linux
 ENV FLUTTER_HOME=/opt/flutter
 ENV PATH=$PATH:$FLUTTER_HOME/bin:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools
 
+# Download and install nodemon for watching the tests
+# RUN apt-get update && install -y npm && \
+#    npm install -g nodemon
+
 
 # Install USB utils for Android debugging
 RUN apt-get update && apt-get install -y usbutils
