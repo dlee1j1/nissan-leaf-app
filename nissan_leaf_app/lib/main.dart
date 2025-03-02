@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'obd_controller.dart';
-import 'obd_command.dart';
+import 'services/obd/obd_controller.dart';
+import 'services/obd/obd_command.dart';
 import 'components/log_viewer.dart';
 import 'package:simple_logger/simple_logger.dart';
 import 'dart:async';

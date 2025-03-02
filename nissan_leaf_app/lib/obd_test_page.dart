@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'obd_command.dart';
-import 'mock_obd_controller.dart';
+import 'services/obd/obd_command.dart';
+import 'services/obd/mock_obd_controller.dart';
 import 'components/log_viewer.dart';
 
 class ObdTestPage extends StatefulWidget {
