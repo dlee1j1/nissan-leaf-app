@@ -48,3 +48,7 @@ reference/
 **/ios/**/profile
 **/ios/**/xcuserdata
 **/ios/.generated/
+
+# zip files
+*.zip
+

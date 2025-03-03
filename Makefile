@@ -44,6 +44,10 @@ web: test
 clean:
 	cd nissan_leaf_app && flutter clean
 
+zip:
+	zip -r -u app.zip .devcontainer .vscode .env .gitignore docker* Makefile process-test-file.sh setup-android-debugging.ps1 \
+	nissan_leaf_app/lib nissan_leaf_app/test
+
 # Docker stuff - this stuff runs outside the container
 docker-build: .docker-build-stamp 
 
