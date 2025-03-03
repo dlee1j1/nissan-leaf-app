@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:nissan_leaf_app/services/obd/obd_command.dart';
-import 'package:nissan_leaf_app/services/obd/mock_obd_controller.dart';
+import 'package:nissan_leaf_app/obd/obd_command.dart';
+import 'package:nissan_leaf_app/obd/mock_obd_controller.dart';
 
 void main() {
   group('OBDCommand Flow Tests', () {

@@ -1,7 +1,7 @@
 // ignore_for_file: library_private_types_in_public_api
 
 import 'package:flutter/material.dart';
-import '../services/obd/obd_command.dart';
+import '../obd/obd_command.dart';
 import 'package:simple_logger/simple_logger.dart';
 
 class ObdCommandsPanel extends StatefulWidget {

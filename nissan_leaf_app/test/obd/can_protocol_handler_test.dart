@@ -1,5 +1,5 @@
 import 'package:test/test.dart';
-import 'package:nissan_leaf_app/services/obd/can_protocol_handler.dart';
+import 'package:nissan_leaf_app/obd/can_protocol_handler.dart';
 
 void main() {
   group('CANProtocolHandler', () {

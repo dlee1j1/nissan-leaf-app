@@ -1,6 +1,6 @@
 import 'package:test/test.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
-import 'package:nissan_leaf_app/services/obd/obd_controller.dart';
+import 'package:nissan_leaf_app/obd/obd_controller.dart';
 import 'dart:convert';
 import 'dart:async';
 
