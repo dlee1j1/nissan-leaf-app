@@ -9,7 +9,7 @@ import 'readings_chart_widget.dart';
 class DashboardPage extends StatefulWidget {
   final ObdController? obdController;
 
-  const DashboardPage({Key? key, this.obdController}) : super(key: key);
+  const DashboardPage({super.key, this.obdController});
 
   @override
   State<DashboardPage> createState() => _DashboardPageState();

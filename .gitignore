@@ -49,6 +49,6 @@ reference/
 **/ios/**/xcuserdata
 **/ios/.generated/
 
-# zip files
+# zip and repomix files
 *.zip
-
+*.rmx

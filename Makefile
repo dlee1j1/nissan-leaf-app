@@ -44,9 +44,12 @@ web: test
 clean:
 	cd nissan_leaf_app && flutter clean
 
-zip:
-	zip -r -u app.zip .devcontainer .vscode .env .gitignore docker* Makefile process-test-file.sh setup-android-debugging.ps1 \
-	nissan_leaf_app/lib nissan_leaf_app/test
+repomix:
+	repomix -o app-base.rmx --include "nissan_leaf_app/lib/*.dart,.devcontainer,.vscode/**/*,.env,.gitignore,docker*,Makefile,process-test-file.sh,setup-android-debugging.ps1"  
+	repomix -o data.rmx nissan_leaf_app/lib/data nissan_leaf_app/test/data 
+	repomix -o UI-components.rmx nissan_leaf_app/lib/components nissan_leaf_app/test/components
+	repomix -o obd.rmx nissan_leaf_app/lib/obd nissan_leaf_app/test/obd
+	
 
 # Docker stuff - this stuff runs outside the container
 docker-build: .docker-build-stamp 
