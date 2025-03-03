@@ -8,6 +8,7 @@ import 'package:simple_logger/simple_logger.dart';
 import 'dart:async';
 import 'obd_test_page.dart';
 import 'components/obd_commands_panel.dart';
+import 'components/dashboard_page.dart';
 
 // ignore: constant_identifier_names
 const SERVICE_UUID = "0000ffe0-0000-1000-8000-00805f9b34fb";
@@ -45,10 +46,29 @@ class NissanLeafApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Nissan Leaf OBD',
-      theme: ThemeData(primarySwatch: Colors.blue),
+      theme: ThemeData(
+        primarySwatch: Colors.blue,
+        brightness: Brightness.light,
+        visualDensity: VisualDensity.adaptivePlatformDensity,
+      ),
+      darkTheme: ThemeData(
+        primarySwatch: Colors.blue,
+        brightness: Brightness.dark,
+        visualDensity: VisualDensity.adaptivePlatformDensity,
+      ),
+      themeMode: ThemeMode.system,
       home: BleScanPage(), // Pass the logger to the page
       routes: {
         '/obd_test': (context) => ObdTestPage(),
+        '/dashboard': (context) {
+          // Get the controller from the arguments if available
+          final args = ModalRoute.of(context)?.settings.arguments;
+          ObdController? controller;
+          if (args is ObdController) {
+            controller = args;
+          }
+          return DashboardPage(obdController: controller);
+        },
       },
     );
   }
@@ -68,6 +88,7 @@ class _BleScanPageState extends State<BleScanPage> {
   bool isConnecting = false; // Track connection state
   String connectionStatus = 'Disconnected';
   BluetoothDevice? connectedDevice;
+  ObdController? obdController;
 
   @override
   void initState() {
@@ -183,7 +204,7 @@ class _BleScanPageState extends State<BleScanPage> {
       _log.finest('Using characteristic ${characteristic.uuid}');
 
       // Create ObdController instance
-      var obdController = ObdController(characteristic);
+      final obdController = ObdController(characteristic);
       _log.info('Found services - initializing odb controller...');
       await obdController.initialize();
       // Send a command and get the response
@@ -210,6 +231,7 @@ class _BleScanPageState extends State<BleScanPage> {
       _log.info('Disconnecting from device: ${connectedDevice!.platformName}...');
       await connectedDevice!.disconnect();
       connectedDevice = null; // Clear the connected device
+      obdController = null; // Clear the controller
       setState(() {
         connectionStatus = 'Disconnected';
       });
@@ -226,8 +248,17 @@ class _BleScanPageState extends State<BleScanPage> {
       appBar: AppBar(title: const Text('Nissan Leaf OBD Scanner'), actions: [
         ElevatedButton(
           onPressed: () => Navigator.pushNamed(context, '/obd_test'),
-          child: Text('OBD Test Page'),
+          child: Text('OBD Test'),
         ),
+        if (obdController != null)
+          ElevatedButton(
+            onPressed: () => Navigator.pushNamed(
+              context,
+              '/dashboard',
+              arguments: obdController,
+            ),
+            child: Text('Dashboard'),
+          ),
       ]),
       body: Column(
         children: [
@@ -300,9 +331,22 @@ class _BleScanPageState extends State<BleScanPage> {
           if (connectedDevice != null)
             Padding(
               padding: const EdgeInsets.all(16.0),
-              child: ElevatedButton(
-                onPressed: disconnectDevice,
-                child: const Text('Disconnect'),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  ElevatedButton(
+                    onPressed: disconnectDevice,
+                    child: const Text('Disconnect'),
+                  ),
+                  ElevatedButton(
+                    onPressed: () => Navigator.pushNamed(
+                      context,
+                      '/dashboard',
+                      arguments: obdController,
+                    ),
+                    child: const Text('Open Dashboard'),
+                  ),
+                ],
               ),
             ),
         ],

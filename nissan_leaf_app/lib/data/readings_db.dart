@@ -73,6 +73,11 @@ class ReadingsDatabase {
     _databasePath = null;
   }
 
+  Future<void> close() async {
+    await _database?.close();
+    _database = null;
+  }
+
   // Insert a new reading
   Future<int> insertReading(Reading reading) async {
     try {
