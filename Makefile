@@ -18,6 +18,12 @@ setup:
 	cd nissan_leaf_app && flutter pub add flutter_blue_plus
 	cd nissan_leaf_app && flutter pub add sqflite
 	cd nissan_leaf_app && flutter pub add http
+	cd nissan_leaf_app && flutter pub add path
+	cd nissan_leaf_app && flutter pub add path_provider
+	cd nissan_leaf_app && flutter pub add sqflite_common_ffi --dev
+	cd nissan_leaf_app && flutter pub add meta
+	cd nissan_leaf_app && flutter pub add fl_chart
+	cd nissan_leaf_app && flutter pub add intl
 	cd nissan_leaf_app && flutter pub get
 
 test:

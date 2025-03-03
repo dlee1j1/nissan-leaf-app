@@ -10,6 +10,8 @@ ENV PATH=$PATH:$FLUTTER_HOME/bin:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$AND
 # RUN apt-get update && install -y npm && \
 #    npm install -g nodemon
 
+# Install SQL Lite for database testing
+RUN apt-get update && apt-get install -y sqlite3 libsqlite3-dev
 
 # Install USB utils for Android debugging
 RUN apt-get update && apt-get install -y usbutils
