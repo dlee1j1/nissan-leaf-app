@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-import 'obd/obd_command.dart';
-import 'obd/mock_obd_controller.dart';
-import 'components/log_viewer.dart';
+import '../obd/obd_command.dart';
+import '../obd/mock_obd_controller.dart';
+import '../components/log_viewer.dart';
 
 class ObdTestPage extends StatefulWidget {
   const ObdTestPage({super.key});

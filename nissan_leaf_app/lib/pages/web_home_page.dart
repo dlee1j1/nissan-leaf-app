@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 
-import 'obd/obd_command.dart';
-import 'obd/mock_obd_controller.dart';
-import 'components/dashboard_page.dart';
-import 'background_service.dart';
+import '../obd/obd_command.dart';
+import '../obd/mock_obd_controller.dart';
+import 'dashboard_page.dart';
+import '../obd/bluetooth_device_manager.dart';
 
 // Web-specific home page that doesn't require Bluetooth
 class WebHomePage extends StatefulWidget {
@@ -76,8 +76,9 @@ class _WebHomePageState extends State<WebHomePage> {
 
     // Initialize OBD commands with the mock controller
     OBDCommand.setObdController(mockController!);
-    // Also set the controller for the background service
-    BackgroundService.setObdController(mockController!);
+    // Enable mock mode in the device manager too
+    final deviceManager = BluetoothDeviceManager.instance;
+    deviceManager.enableMockMode(mockResponse: batteryResponse, mockRangeResponse: rangeResponse);
   }
 
   @override
@@ -161,7 +162,7 @@ class _WebHomePageState extends State<WebHomePage> {
 
           // Preview of battery status
           Expanded(
-            child: DashboardPage(obdController: mockController),
+            child: const DashboardPage(),
           ),
         ],
       ),

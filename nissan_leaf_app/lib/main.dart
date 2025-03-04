@@ -1,15 +1,15 @@
+// lib/main.dart (updated version)
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:simple_logger/simple_logger.dart';
 import 'dart:async';
 
-import 'web_home_page.dart';
-import 'ble_scan_page.dart';
-import 'obd_test_page.dart';
+import 'pages/web_home_page.dart';
+import 'pages/connection_page.dart';
+import 'pages/dashboard_page.dart';
 import 'components/log_viewer.dart';
-import 'components/dashboard_page.dart';
-import 'obd/obd_command.dart';
-import 'obd/obd_controller.dart';
+import 'obd/bluetooth_device_manager.dart';
+import 'background_service.dart';
 
 // Global logger instance
 final _log = SimpleLogger();
@@ -28,12 +28,6 @@ void main() {
       _log.severe('Error: $error\n$stack');
     },
   );
-
-  final commands = OBDCommand.getAllCommands();
-  _log.info('There are ${commands.length} commands');
-  _log.info(
-      'Registered commands before panel: ${OBDCommand.lbc.name}'); // Force static initialization
-  _log.info('Available commands: ${OBDCommand.getAllCommands().length}');
 }
 
 class NissanLeafApp extends StatelessWidget {
@@ -42,7 +36,7 @@ class NissanLeafApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Nissan Leaf OBD',
+      title: 'Nissan Leaf Battery Tracker',
       theme: ThemeData(
         primarySwatch: Colors.blue,
         brightness: Brightness.light,
@@ -54,19 +48,72 @@ class NissanLeafApp extends StatelessWidget {
         visualDensity: VisualDensity.adaptivePlatformDensity,
       ),
       themeMode: ThemeMode.system,
-      home: kIsWeb ? const WebHomePage() : const BleScanPage(), // Use different home page for web
+      home: kIsWeb ? const WebHomePage() : const MainScreen(),
       routes: {
-        '/obd_test': (context) => const ObdTestPage(),
-        '/dashboard': (context) {
-          // Get the controller from the arguments if available
-          final args = ModalRoute.of(context)?.settings.arguments;
-          ObdController? controller;
-          if (args is ObdController) {
-            controller = args;
-          }
-          return DashboardPage(obdController: controller);
-        },
+        '/connection': (context) => const ConnectionPage(),
+        '/connection_config': (context) => const ConnectionPage(forConfiguration: true),
+        '/dashboard': (context) => const DashboardPage(),
+        '/obd_test': (context) => const ConnectionPage(), // Redirects to the new connection page
       },
     );
+  }
+}
+
+class MainScreen extends StatefulWidget {
+  const MainScreen({super.key});
+
+  @override
+  State<MainScreen> createState() => _MainScreenState();
+}
+
+class _MainScreenState extends State<MainScreen> {
+  final _deviceManager = BluetoothDeviceManager.instance;
+  bool _isInitializing = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _initializeApp();
+  }
+
+  Future<void> _initializeApp() async {
+    // Initialize the device manager
+    await _deviceManager.initialize();
+
+    // Initialize the background service
+    await BackgroundService.initialize();
+
+    // Check if service was enabled previously
+    if (await BackgroundService.isServiceEnabled()) {
+      await BackgroundService.startService();
+    }
+
+    // Try to reconnect to the last device
+    await _deviceManager.reconnectToSavedDevice();
+
+    setState(() {
+      _isInitializing = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isInitializing) {
+      return Scaffold(
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: const [
+              CircularProgressIndicator(),
+              SizedBox(height: 16),
+              Text('Initializing...'),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // Once initialized, show the dashboard
+    return const DashboardPage();
   }
 }

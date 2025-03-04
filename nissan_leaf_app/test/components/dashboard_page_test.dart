@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:nissan_leaf_app/obd/mock_obd_controller.dart';
-import 'package:nissan_leaf_app/components/dashboard_page.dart';
+import 'package:nissan_leaf_app/obd/bluetooth_device_manager.dart';
+import 'package:nissan_leaf_app/pages/dashboard_page.dart';
 import 'package:nissan_leaf_app/components/battery_status_widget.dart';
 import 'package:nissan_leaf_app/components/readings_chart_widget.dart';
 
@@ -42,12 +42,16 @@ void main() {
     });
 
     testWidgets('renders correctly with OBD controller', (WidgetTester tester) async {
-      final mockController = MockObdController(mockLbcResponse);
-      mockController.mockRangeResponse = mockRangeResponse;
+      // Set up mock mode in device manager
+      final deviceManager = BluetoothDeviceManager.instance;
+      deviceManager.enableMockMode(
+        mockResponse: mockLbcResponse,
+        mockRangeResponse: mockRangeResponse,
+      );
 
       await tester.pumpWidget(
         MaterialApp(
-          home: DashboardPage(obdController: mockController),
+          home: DashboardPage(),
         ),
       );
 
@@ -64,6 +68,8 @@ void main() {
       // Should have the battery status and chart widgets
       expect(find.byType(BatteryStatusWidget), findsOneWidget);
       expect(find.byType(ReadingsChartWidget), findsAtLeastNWidgets(1));
+
+      deviceManager.disableMockMode();
     });
 
     testWidgets('shows refresh indicator when pulled down', (WidgetTester tester) async {

@@ -1,16 +1,16 @@
+// lib/components/dashboard_page.dart (updated version)
 import 'package:flutter/material.dart';
+import 'dart:async';
 import '../data/reading_model.dart';
 import '../data/readings_db.dart';
 import '../obd/obd_command.dart';
-import '../obd/obd_controller.dart';
-import 'battery_status_widget.dart';
-import 'service_control_widget.dart';
-import 'readings_chart_widget.dart';
+import '../obd/bluetooth_device_manager.dart';
+import '../components/battery_status_widget.dart';
+import '../components/service_control_widget.dart';
+import '../components/readings_chart_widget.dart';
 
 class DashboardPage extends StatefulWidget {
-  final ObdController? obdController;
-
-  const DashboardPage({super.key, this.obdController});
+  const DashboardPage({super.key});
 
   @override
   State<DashboardPage> createState() => _DashboardPageState();
@@ -18,23 +18,36 @@ class DashboardPage extends StatefulWidget {
 
 class _DashboardPageState extends State<DashboardPage> {
   final ReadingsDatabase _db = ReadingsDatabase();
+  final BluetoothDeviceManager _deviceManager = BluetoothDeviceManager.instance;
+
   List<Reading> _readings = [];
   Reading? _currentReading;
   bool _isLoadingCurrent = false;
   bool _isLoadingHistory = false;
   String? _errorMessage;
 
+  // For connection status display
+  ConnectionStatus _connectionStatus = ConnectionStatus.disconnected;
+  StreamSubscription? _connectionStatusSubscription;
+
   @override
   void initState() {
     super.initState();
+    _setupConnectionListener();
     _initializeData();
+  }
+
+  void _setupConnectionListener() {
+    _connectionStatusSubscription = _deviceManager.connectionStatus.listen((status) {
+      setState(() {
+        _connectionStatus = status;
+      });
+    });
   }
 
   Future<void> _initializeData() async {
     await _loadHistoricalData();
-    if (widget.obdController != null) {
-      await _refreshCurrentReading();
-    }
+    await _refreshCurrentReading();
   }
 
   Future<void> _loadHistoricalData() async {
@@ -62,10 +75,19 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Future<void> _refreshCurrentReading() async {
-    if (widget.obdController == null) {
+    if (!_deviceManager.isConnected && !_deviceManager.isInMockMode) {
+      // If we're not connected, try to use the latest reading from the database
+      final latestReading = await _db.getMostRecentReading();
       setState(() {
-        _errorMessage = 'OBD controller not available';
+        _currentReading = latestReading;
       });
+
+      // If no reading available, show error
+      if (latestReading == null) {
+        setState(() {
+          _errorMessage = 'No OBD connection or historical data available';
+        });
+      }
       return;
     }
 
@@ -75,12 +97,9 @@ class _DashboardPageState extends State<DashboardPage> {
         _errorMessage = null;
       });
 
-      // Check if OBD controller is initialized and set it if needed
-      OBDCommand.setObdController(widget.obdController!);
-
       // Collect battery data from the vehicle
-      final batteryData = await OBDCommand.lbc.run();
-      final rangeData = await OBDCommand.rangeRemaining.run();
+      final batteryData = await _deviceManager.runCommand(OBDCommand.lbc);
+      final rangeData = await _deviceManager.runCommand(OBDCommand.rangeRemaining);
 
       if (batteryData.isEmpty) {
         setState(() {
@@ -132,6 +151,57 @@ class _DashboardPageState extends State<DashboardPage> {
       appBar: AppBar(
         title: const Text('Nissan Leaf Battery Tracker'),
         actions: [
+          // Connection status indicator
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8.0),
+            child: Center(
+              child: Row(
+                children: [
+                  Icon(
+                    _deviceManager.isConnected || _deviceManager.isInMockMode
+                        ? Icons.bluetooth_connected
+                        : Icons.bluetooth_disabled,
+                    size: 16,
+                    color: _deviceManager.isConnected
+                        ? Colors.green
+                        : _deviceManager.isInMockMode
+                            ? Colors.orange
+                            : Colors.red,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    _deviceManager.isConnected
+                        ? 'Connected'
+                        : _deviceManager.isInMockMode
+                            ? 'Mock Mode'
+                            : 'Disconnected',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: _deviceManager.isConnected
+                          ? Colors.green
+                          : _deviceManager.isInMockMode
+                              ? Colors.orange
+                              : Colors.red,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          // Connect button
+          IconButton(
+            icon: const Icon(Icons.bluetooth),
+            tooltip: 'Connect to OBD',
+            onPressed: () async {
+              if (_deviceManager.isConnected) {
+                await _deviceManager.disconnect();
+              } else {
+                await Navigator.pushNamed(context, '/connection');
+                // Refresh after returning from connection page
+                _refreshCurrentReading();
+              }
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.settings),
             onPressed: () {
@@ -184,9 +254,12 @@ class _DashboardPageState extends State<DashboardPage> {
 
               const SizedBox(height: 16),
 
-              // Historical data chart
+              // Background service control
               const ServiceControlWidget(),
+
               const SizedBox(height: 16),
+
+              // Battery charge chart
               ReadingsChartWidget(
                 readings: _readings,
                 isLoading: _isLoadingHistory,
@@ -205,7 +278,7 @@ class _DashboardPageState extends State<DashboardPage> {
               ),
 
               // Connection status or instructions
-              if (widget.obdController == null)
+              if (!_deviceManager.isConnected && !_deviceManager.isInMockMode)
                 Card(
                   child: Padding(
                     padding: const EdgeInsets.all(16.0),
@@ -225,8 +298,7 @@ class _DashboardPageState extends State<DashboardPage> {
                         const SizedBox(height: 16),
                         ElevatedButton(
                           onPressed: () {
-                            // Navigate to connection page (existing functionality)
-                            Navigator.pop(context);
+                            Navigator.pushNamed(context, '/connection');
                           },
                           child: const Text('Connect to Vehicle'),
                         ),
@@ -243,23 +315,8 @@ class _DashboardPageState extends State<DashboardPage> {
 
   @override
   void dispose() {
+    _connectionStatusSubscription?.cancel();
     _db.close();
     super.dispose();
-  }
-}
-
-// Extension to allow checking if the OBD controller is set
-extension ObdCommandExtension on OBDCommand {
-  static bool obdControllerIsSet() {
-    try {
-      // Try to access a static property or method that would fail if not initialized
-      OBDCommand.probe;
-      return true;
-    } catch (e) {
-      if (e.toString().contains('ObdController not initialized')) {
-        return false;
-      }
-      rethrow;
-    }
   }
 }

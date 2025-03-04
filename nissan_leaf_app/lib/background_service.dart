@@ -3,7 +3,6 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_background_service/flutter_background_service.dart';
-import 'package:flutter_background_service_android/flutter_background_service_android.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -12,8 +11,7 @@ import 'package:simple_logger/simple_logger.dart';
 import 'data/reading_model.dart';
 import 'data/readings_db.dart';
 import 'obd/obd_command.dart';
-import 'obd/obd_controller.dart';
-import 'obd/mock_obd_controller.dart';
+import 'obd/bluetooth_device_manager.dart';
 
 // Key constants for shared preferences
 const String _serviceEnabledKey = 'background_service_enabled';
@@ -24,7 +22,6 @@ class BackgroundService {
   static final _log = SimpleLogger();
   static final FlutterBackgroundService _service = FlutterBackgroundService();
   static bool _isInitialized = false;
-  static ObdController? _obdController;
 
   // Web simulation variables
   static bool _webSimulationRunning = false;
@@ -91,8 +88,7 @@ class BackgroundService {
 
     await Permission.notification.request();
 
-    // These permissions are already handled in the BLE scan page,
-    // but we request them again to be sure
+    // Bluetooth permissions
     await Permission.bluetooth.request();
     await Permission.bluetoothConnect.request();
     await Permission.bluetoothScan.request();
@@ -181,11 +177,6 @@ class BackgroundService {
     return prefs.getBool(_serviceEnabledKey) ?? false;
   }
 
-  /// Set the OBD controller for testing
-  static void setObdController(ObdController controller) {
-    _obdController = controller;
-  }
-
   // Web simulation methods
   static void _startWebSimulation() async {
     _webSimulationTimer?.cancel();
@@ -212,26 +203,9 @@ class BackgroundService {
   }
 
   static void _simulateWebCollection() async {
-    // Use the mock controller from _obdController if it's set
-    ObdController? mockController = _obdController;
-
-    // If no controller set, create a default one
-    if (mockController == null) {
-      _log.warning('No mock controller available for web simulation - using default');
-      mockController = MockObdController('''
-        7BB10356101FFFFF060
-        7BB210289FFFFE763FF
-        7BB22FFCA4A09584650
-        7BB239608383E038700
-        7BB24017000239A000C
-        7BB25814C00191FB580
-        7BB260005FFFFE763FF
-        7BB27FFE56501AEFFFF''');
-      (mockController as MockObdController).mockRangeResponse = '7BB 03 62 0E 24 05 DC';
-    }
-
-    // Set the controller for OBD commands
-    OBDCommand.setObdController(mockController);
+    // Enable mock mode in BluetoothDeviceManager
+    final manager = BluetoothDeviceManager.instance;
+    manager.enableMockMode();
 
     try {
       // Notify about collection start
@@ -239,8 +213,8 @@ class BackgroundService {
           .add({'collecting': true, 'lastCollection': DateTime.now().toIso8601String()});
 
       // Collect battery data
-      final batteryData = await OBDCommand.lbc.run();
-      final rangeData = await OBDCommand.rangeRemaining.run();
+      final batteryData = await manager.runCommand(OBDCommand.lbc);
+      final rangeData = await manager.runCommand(OBDCommand.rangeRemaining);
 
       if (batteryData.isEmpty) {
         _log.warning('Failed to retrieve mock battery data');
@@ -313,10 +287,13 @@ void _onStart(ServiceInstance service) async {
   // Create a database instance
   final db = ReadingsDatabase();
 
+  // Initialize BluetoothDeviceManager
+  final deviceManager = BluetoothDeviceManager.instance;
+  await deviceManager.initialize();
+
   // Initialize with a reasonable default frequency
   int collectionFrequencyMinutes = _defaultFrequency;
   bool isMockMode = false;
-  ObdController? obdController = BackgroundService._obdController;
   DateTime? lastCollectionTime;
 
   // Access shared preferences to get the collection frequency
@@ -342,33 +319,27 @@ void _onStart(ServiceInstance service) async {
       service.invoke(
           'status', {'collecting': true, 'lastCollection': DateTime.now().toIso8601String()});
 
-      if (obdController == null && !isMockMode) {
-        // In a real implementation, we would:
-        // 1. Scan for OBD device
-        // 2. Connect to it
-        // 3. Initialize OBD controller
-        // For now, we'll just use mock data in non-testing scenarios
-        final mockResponse = '''
-        7BB10356101FFFFF060
-        7BB210289FFFFE763FF
-        7BB22FFCA4A09584650
-        7BB239608383E038700
-        7BB24017000239A000C
-        7BB25814C00191FB580
-        7BB260005FFFFE763FF
-        7BB27FFE56501AEFFFF''';
+      // Try to use actual OBD connection if available, fallback to mock
+      if (!deviceManager.isConnected && !isMockMode) {
+        try {
+          // Try to reconnect to saved device
+          bool connected = await deviceManager.reconnectToSavedDevice();
 
-        obdController = MockObdController(mockResponse);
-        // Set range response too
-        (obdController as MockObdController).mockRangeResponse = '7BB 03 62 0E 24 05 DC';
+          if (!connected) {
+            log.info('Could not connect to OBD device, using mock data');
+            deviceManager.enableMockMode();
+            isMockMode = true;
+          }
+        } catch (e) {
+          log.warning('Error connecting to OBD device: $e');
+          deviceManager.enableMockMode();
+          isMockMode = true;
+        }
       }
 
-      // Set the controller for OBD commands
-      OBDCommand.setObdController(obdController!);
-
       // Collect battery data
-      final batteryData = await OBDCommand.lbc.run();
-      final rangeData = await OBDCommand.rangeRemaining.run();
+      final batteryData = await deviceManager.runCommand(OBDCommand.lbc);
+      final rangeData = await deviceManager.runCommand(OBDCommand.rangeRemaining);
 
       if (batteryData.isEmpty) {
         log.warning('Failed to retrieve battery data');
@@ -420,6 +391,11 @@ void _onStart(ServiceInstance service) async {
 
       log.info(
           'Successfully collected and stored battery data. SOC: $stateOfCharge%, Health: $batteryHealth%');
+
+      // Disconnect to save battery if we're not using mock mode
+      if (deviceManager.isConnected && !isMockMode) {
+        await deviceManager.disconnect();
+      }
     } catch (e, stackTrace) {
       log.severe('Error collecting data: $e\n$stackTrace');
       service.invoke('status', {'error': e.toString(), 'collecting': false});
@@ -440,6 +416,12 @@ void _onStart(ServiceInstance service) async {
   service.on('stopService').listen((event) {
     log.info('Stopping background service');
     timer?.cancel();
+
+    // Disconnect if connected
+    if (deviceManager.isConnected) {
+      deviceManager.disconnect();
+    }
+
     service.stopSelf();
   });
 
@@ -467,12 +449,18 @@ void _onStart(ServiceInstance service) async {
       isMockMode = event['enabled'];
       log.info('Mock mode set to: $isMockMode');
 
-      if (isMockMode && event['mockData'] != null) {
-        // Set up mock controller with the provided data
-        obdController = MockObdController(event['mockData']);
+      if (isMockMode) {
+        // Enable mock mode
+        if (deviceManager.isConnected) {
+          deviceManager.disconnect();
+        }
+        deviceManager.enableMockMode(
+          mockResponse: event['mockData'],
+          mockRangeResponse: event['mockRangeData'],
+        );
       } else {
-        // Clear the mock controller when disabling mock mode
-        obdController = null;
+        // Disable mock mode
+        deviceManager.disableMockMode();
       }
     }
   });
