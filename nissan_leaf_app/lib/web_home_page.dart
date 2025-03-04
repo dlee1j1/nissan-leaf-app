@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'obd/obd_command.dart';
 import 'obd/mock_obd_controller.dart';
 import 'components/dashboard_page.dart';
+import 'background_service.dart';
 
 // Web-specific home page that doesn't require Bluetooth
 class WebHomePage extends StatefulWidget {
@@ -75,6 +76,8 @@ class _WebHomePageState extends State<WebHomePage> {
 
     // Initialize OBD commands with the mock controller
     OBDCommand.setObdController(mockController!);
+    // Also set the controller for the background service
+    BackgroundService.setObdController(mockController!);
   }
 
   @override

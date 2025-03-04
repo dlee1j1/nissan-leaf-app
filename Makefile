@@ -24,6 +24,11 @@ setup:
 	cd nissan_leaf_app && flutter pub add meta
 	cd nissan_leaf_app && flutter pub add fl_chart
 	cd nissan_leaf_app && flutter pub add intl
+	cd nissan_leaf_app && flutter pub add flutter_background_service
+	cd nissan_leaf_app && flutter pub add flutter_background_service_android
+	cd nissan_leaf_app && flutter pub add flutter_local_notifications
+	cd nissan_leaf_app && flutter pub add permission_handler
+	cd nissan_leaf_app && flutter pub add shared_preferences
 	cd nissan_leaf_app && flutter pub get
 
 test:

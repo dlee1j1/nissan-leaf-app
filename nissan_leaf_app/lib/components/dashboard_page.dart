@@ -4,6 +4,7 @@ import '../data/readings_db.dart';
 import '../obd/obd_command.dart';
 import '../obd/obd_controller.dart';
 import 'battery_status_widget.dart';
+import 'service_control_widget.dart';
 import 'readings_chart_widget.dart';
 
 class DashboardPage extends StatefulWidget {
@@ -184,6 +185,8 @@ class _DashboardPageState extends State<DashboardPage> {
               const SizedBox(height: 16),
 
               // Historical data chart
+              const ServiceControlWidget(),
+              const SizedBox(height: 16),
               ReadingsChartWidget(
                 readings: _readings,
                 isLoading: _isLoadingHistory,
