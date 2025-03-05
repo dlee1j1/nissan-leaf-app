@@ -27,9 +27,9 @@ class BluetoothDeviceManager {
   factory BluetoothDeviceManager({BluetoothServiceInterface? bluetoothService}) {
     if (bluetoothService != null) {
       _instance._bluetoothService = bluetoothService;
-    } else if (_instance._bluetoothService == null) {
-      _instance._bluetoothService = FlutterBluetoothService();
     }
+
+    _instance._bluetoothService ??= FlutterBluetoothService();
     return _instance;
   }
 

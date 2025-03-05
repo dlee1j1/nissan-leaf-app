@@ -170,11 +170,7 @@ class _DashboardPageState extends State<DashboardPage> {
                   ),
                   const SizedBox(width: 4),
                   Text(
-                    _deviceManager.isConnected
-                        ? 'Connected'
-                        : _deviceManager.isInMockMode
-                            ? 'Mock Mode'
-                            : 'Disconnected',
+                    _connectionStatus.toString().split('.').last,
                     style: TextStyle(
                       fontSize: 12,
                       color: _deviceManager.isConnected
