@@ -65,6 +65,7 @@ void main() {
 
       // Find the Test Connection button and tap it
       final testButton = find.text('Test Connection');
+      await tester.ensureVisible(testButton);
       await tester.tap(testButton);
       await tester.pumpAndSettle();
 
@@ -93,6 +94,7 @@ void main() {
 
       // Find the Test Connection button and tap it
       final testButton = find.text('Test Connection');
+      await tester.ensureVisible(testButton);
       await tester.tap(testButton);
       await tester.pumpAndSettle();
 

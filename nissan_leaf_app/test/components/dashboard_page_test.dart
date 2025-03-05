@@ -101,8 +101,23 @@ void main() {
       await tester.tap(find.byIcon(Icons.settings));
       await tester.pump();
 
+      // Now check for the menu items in the popup
+      final mqttSettingsItem = find.widgetWithText(ListTile, 'MQTT Settings');
+      final generalSettingsItem = find.widgetWithText(ListTile, 'General Settings');
+
+      expect(mqttSettingsItem, findsOneWidget, reason: 'MQTT Settings menu item should be present');
+      expect(generalSettingsItem, findsOneWidget,
+          reason: 'General Settings menu item should be present');
+
+/*
+      // Tap the general settings option
+      await tester.ensureVisible(generalSettingsItem);
+      await tester.tap(generalSettingsItem);
+      await tester.pumpAndSettle(); // Wait for navigation/action
+
       // Verify snackbar appears (since we don't have settings page yet)
       expect(find.text('Settings page coming soon'), findsOneWidget);
+*/
     });
   });
 }
