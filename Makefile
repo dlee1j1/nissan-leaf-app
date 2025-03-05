@@ -30,6 +30,9 @@ setup:
 	cd nissan_leaf_app && flutter pub add flutter_local_notifications
 	cd nissan_leaf_app && flutter pub add permission_handler
 	cd nissan_leaf_app && flutter pub add shared_preferences
+	cd nissan_leaf_app && flutter pub add flutter_secure_storage
+	cd nissan_leaf_app && flutter pub add mqtt_client
+	cd nissan_leaf_app && flutter pub add connectivity_plus
 	cd nissan_leaf_app && flutter pub get
 
 test:

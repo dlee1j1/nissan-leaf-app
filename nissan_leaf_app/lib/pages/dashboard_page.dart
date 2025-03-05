@@ -1,5 +1,6 @@
 // lib/components/dashboard_page.dart (updated version)
 import 'package:flutter/material.dart';
+import 'package:nissan_leaf_app/mqtt_client.dart';
 import 'dart:async';
 import '../data/reading_model.dart';
 import '../data/readings_db.dart';
@@ -30,10 +31,15 @@ class _DashboardPageState extends State<DashboardPage> {
   ConnectionStatus _connectionStatus = ConnectionStatus.disconnected;
   StreamSubscription? _connectionStatusSubscription;
 
+  // MQTT state
+  StreamSubscription? _mqttStatusSubscription;
+  bool _isMqttConnected = false;
+
   @override
   void initState() {
     super.initState();
     _setupConnectionListener();
+    _setupMqttListener();
     _initializeData();
   }
 
@@ -43,6 +49,18 @@ class _DashboardPageState extends State<DashboardPage> {
         _connectionStatus = status;
       });
     });
+  }
+
+  void _setupMqttListener() {
+    final mqttClient = MqttClient.instance;
+    _mqttStatusSubscription = mqttClient.connectionStatus.listen((status) {
+      setState(() {
+        _isMqttConnected = status == MqttConnectionStatus.connected;
+      });
+    });
+
+    // Get initial status
+    _isMqttConnected = mqttClient.isConnected;
   }
 
   Future<void> _initializeData() async {
@@ -198,14 +216,35 @@ class _DashboardPageState extends State<DashboardPage> {
               }
             },
           ),
-          IconButton(
+          // Add this PopupMenuButton for settings
+          PopupMenuButton<String>(
             icon: const Icon(Icons.settings),
-            onPressed: () {
-              // Navigate to settings page (to be implemented)
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Settings page coming soon')),
-              );
+            onSelected: (value) {
+              if (value == 'mqtt') {
+                Navigator.pushNamed(context, '/mqtt_settings');
+              } else if (value == 'settings') {
+                // General settings (to be implemented later)
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Settings page coming soon')),
+                );
+              }
             },
+            itemBuilder: (context) => [
+              const PopupMenuItem<String>(
+                value: 'mqtt',
+                child: ListTile(
+                  leading: Icon(Icons.cloud),
+                  title: Text('MQTT Settings'),
+                ),
+              ),
+              const PopupMenuItem<String>(
+                value: 'settings',
+                child: ListTile(
+                  leading: Icon(Icons.settings),
+                  title: Text('General Settings'),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -255,6 +294,36 @@ class _DashboardPageState extends State<DashboardPage> {
 
               const SizedBox(height: 16),
 
+              // MQTT status
+              if (_isMqttConnected)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8.0),
+                  child: Card(
+                    color: Colors.green[50],
+                    child: Padding(
+                      padding: const EdgeInsets.all(8.0),
+                      child: Row(
+                        children: [
+                          Icon(Icons.cloud_done, color: Colors.green),
+                          SizedBox(width: 8),
+                          Text(
+                            'Connected to MQTT',
+                            style: TextStyle(color: Colors.green[800]),
+                          ),
+                          Spacer(),
+                          TextButton(
+                            onPressed: () {
+                              Navigator.pushNamed(context, '/mqtt_settings');
+                            },
+                            child: Text('Configure'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+
+              const SizedBox(height: 16),
               // Battery charge chart
               ReadingsChartWidget(
                 readings: _readings,
@@ -311,6 +380,7 @@ class _DashboardPageState extends State<DashboardPage> {
 
   @override
   void dispose() {
+    _mqttStatusSubscription?.cancel();
     _connectionStatusSubscription?.cancel();
     _db.close();
     super.dispose();

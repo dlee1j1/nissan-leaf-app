@@ -1,6 +1,7 @@
 // lib/main.dart (updated version)
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:nissan_leaf_app/components/mqtt_settings_widget.dart';
 import 'package:simple_logger/simple_logger.dart';
 import 'dart:async';
 
@@ -53,6 +54,10 @@ class NissanLeafApp extends StatelessWidget {
         '/connection': (context) => const ConnectionPage(),
         '/connection_config': (context) => const ConnectionPage(forConfiguration: true),
         '/dashboard': (context) => const DashboardPage(),
+        '/mqtt_settings': (context) => Scaffold(
+              appBar: AppBar(title: const Text('MQTT Settings')),
+              body: SingleChildScrollView(child: MqttSettingsWidget()),
+            ),
         '/obd_test': (context) => const ConnectionPage(), // Redirects to the new connection page
       },
     );

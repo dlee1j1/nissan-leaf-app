@@ -52,3 +52,6 @@ reference/
 # zip and repomix files
 *.zip
 *.rmx
+
+# all generated files
+[Gg]enerated*

@@ -13,6 +13,9 @@ import 'data/readings_db.dart';
 import 'obd/obd_command.dart';
 import 'obd/bluetooth_device_manager.dart';
 
+import 'mqtt_client.dart';
+import 'mqtt_settings.dart';
+
 // Key constants for shared preferences
 const String _serviceEnabledKey = 'background_service_enabled';
 const String _collectionFrequencyKey = 'collection_frequency_minutes';
@@ -77,6 +80,15 @@ class BackgroundService {
         onBackground: _onIosBackground,
       ),
     );
+
+    // Initialize MQTT client if settings are available
+    final mqttSettings = MqttSettings();
+    await mqttSettings.loadSettings();
+    if (mqttSettings.enabled && mqttSettings.isValid()) {
+      final mqttClient = MqttClient.instance;
+      await mqttClient.initialize(mqttSettings);
+      _log.info('MQTT client initialized');
+    }
 
     _isInitialized = true;
     _log.info('Background service initialized');
@@ -379,6 +391,23 @@ void _onStart(ServiceInstance service) async {
       await db.insertReading(reading);
       lastCollectionTime = DateTime.now();
 
+// Publish to MQTT if enabled
+      final mqttClient = MqttClient.instance;
+      if (mqttClient.isConnected) {
+        try {
+          await mqttClient.publishBatteryData(
+            stateOfCharge: stateOfCharge,
+            batteryHealth: batteryHealth,
+            batteryVoltage: batteryVoltage,
+            batteryCapacity: batteryCapacity,
+            estimatedRange: estimatedRange,
+            sessionId: sessionId,
+          );
+          log.info('Published data to MQTT');
+        } catch (e) {
+          log.warning('Error publishing to MQTT: $e');
+        }
+      }
       // Update status with successful collection
       service.invoke('status', {
         'collecting': false,
@@ -421,6 +450,10 @@ void _onStart(ServiceInstance service) async {
     if (deviceManager.isConnected) {
       deviceManager.disconnect();
     }
+
+    // Clean up MQTT resources
+    final mqttClient = MqttClient.instance;
+    mqttClient.dispose();
 
     service.stopSelf();
   });
