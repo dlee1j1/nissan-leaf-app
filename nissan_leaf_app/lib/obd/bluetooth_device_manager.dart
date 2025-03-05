@@ -1,10 +1,12 @@
-// lib/obd/bluetooth_device_manager.dart
+// lib/obd/bluetooth_device_manager.dart - modified version
 import 'dart:async';
+import 'dart:io' show Platform;
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:simple_logger/simple_logger.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import 'bluetooth_service_interface.dart';
 import '../obd/obd_controller.dart';
 import '../obd/obd_command.dart';
 import '../obd/mock_obd_controller.dart';
@@ -20,9 +22,23 @@ class BluetoothDeviceManager {
   // Singleton pattern
   static final BluetoothDeviceManager _instance = BluetoothDeviceManager._internal();
   static BluetoothDeviceManager get instance => _instance;
+
+  // Allow dependency injection for testing
+  factory BluetoothDeviceManager({BluetoothServiceInterface? bluetoothService}) {
+    if (bluetoothService != null) {
+      _instance._bluetoothService = bluetoothService;
+    } else if (_instance._bluetoothService == null) {
+      _instance._bluetoothService = FlutterBluetoothService();
+    }
+    return _instance;
+  }
+
   BluetoothDeviceManager._internal();
 
   final _log = SimpleLogger();
+
+  // Dependencies
+  BluetoothServiceInterface? _bluetoothService;
 
   // State variables
   BluetoothDevice? _connectedDevice;
@@ -53,7 +69,7 @@ class BluetoothDeviceManager {
 
     _log.info('Initializing BluetoothDeviceManager');
 
-    // Request necessary permissions
+    // Request necessary permissions if on a platform that needs them
     await _requestPermissions();
 
     // Load last known device
@@ -65,10 +81,16 @@ class BluetoothDeviceManager {
 
   /// Request all required permissions for Bluetooth operation
   Future<void> _requestPermissions() async {
-    await Permission.bluetooth.request();
-    await Permission.bluetoothScan.request();
-    await Permission.bluetoothConnect.request();
-    await Permission.location.request();
+    // Only request permissions on platforms that require them
+    if (Platform.isAndroid || Platform.isIOS) {
+      _log.info('Requesting Bluetooth permissions');
+      await Permission.bluetooth.request();
+      await Permission.bluetoothScan.request();
+      await Permission.bluetoothConnect.request();
+      await Permission.location.request();
+    } else {
+      _log.info('Current platform does not require explicit Bluetooth permissions');
+    }
   }
 
   /// Begin scanning for Bluetooth devices
@@ -77,56 +99,43 @@ class BluetoothDeviceManager {
     List<String> nameFilters = const ["OBDBLE"],
   }) async {
     if (!_isInitialized) await initialize();
+    if (_bluetoothService == null) {
+      throw StateError('BluetoothService not initialized');
+    }
 
     _log.info('Starting Bluetooth scan for devices...');
     _updateStatus(ConnectionStatus.scanning);
 
-    final completer = Completer<List<ScanResult>>();
-    final deviceMap = <String, ScanResult>{};
-
-    // Ensure Bluetooth is on
-    if (await FlutterBluePlus.adapterState.first == BluetoothAdapterState.unknown) {
-      await Future.delayed(const Duration(seconds: 1));
-    }
-    if (await FlutterBluePlus.adapterState.first != BluetoothAdapterState.on) {
-      _log.info('Bluetooth is off, attempting to turn on');
-      await FlutterBluePlus.turnOn();
-    }
-
-    // Listen for scan results
-    final subscription = FlutterBluePlus.scanResults.listen((results) {
-      // Update map with latest results
-      for (var result in results) {
-        deviceMap[result.device.remoteId.str] = result;
-      }
-    });
-
     try {
+      // Ensure Bluetooth is on
+      final isOn = await _bluetoothService!.isBluetoothOn();
+      if (!isOn) {
+        _log.info('Bluetooth is off, attempting to turn on');
+        await _bluetoothService!.turnOnBluetooth();
+      }
+
       // Start the scan
-      await FlutterBluePlus.startScan(
+      final results = await _bluetoothService!.scanForDevices(
         timeout: timeout,
-        withNames: nameFilters.isNotEmpty ? nameFilters : [],
+        nameFilters: nameFilters,
       );
 
-      // Wait for scan to complete
-      await FlutterBluePlus.isScanning.where((val) => val == false).first;
-      _log.info('Bluetooth scan completed. Found ${deviceMap.length} devices');
-
+      _log.info('Bluetooth scan completed. Found ${results.length} devices');
       _updateStatus(ConnectionStatus.scanComplete);
-      completer.complete(deviceMap.values.toList());
+      return results;
     } catch (e) {
       _log.warning('Error during device scan: $e');
       _updateStatus(ConnectionStatus.error, 'Scan error: $e');
-      completer.completeError(e);
-    } finally {
-      subscription.cancel();
+      rethrow;
     }
-
-    return completer.future;
   }
 
   /// Connect to a specific Bluetooth device
   Future<bool> connectToDevice(BluetoothDevice device) async {
+    if (_bluetoothService == null) {
+      throw StateError('BluetoothService not initialized');
+    }
+
     if (_isConnecting) {
       _log.warning('Already connecting to a device, ignoring request');
       return false;
@@ -144,10 +153,16 @@ class BluetoothDeviceManager {
       // Attempt to connect with retry logic
       const maxRetries = 3;
       var tries = 0;
+      bool connected = false;
 
-      while (await device.connectionState.first != BluetoothConnectionState.connected) {
+      while (!connected && tries < maxRetries) {
         try {
-          await device.connect(timeout: const Duration(seconds: 5));
+          connected = await _bluetoothService!.connectToDevice(device);
+          if (!connected) {
+            tries++;
+            _log.info('Connection attempt $tries failed');
+            await Future.delayed(const Duration(seconds: 2));
+          }
         } catch (e) {
           tries++;
           _log.info('Connection attempt $tries failed: $e');
@@ -158,12 +173,16 @@ class BluetoothDeviceManager {
         }
       }
 
+      if (!connected) {
+        throw Exception('Failed to connect after $maxRetries attempts');
+      }
+
       _connectedDevice = device;
       _updateStatus(
           ConnectionStatus.connected, 'Connected to ${device.platformName}. Initializing...');
 
       // Discover services
-      var services = await device.discoverServices();
+      var services = await _bluetoothService!.discoverServices(device);
       _log.info('Found ${services.length} services');
 
       // Find our target service
@@ -210,7 +229,7 @@ class BluetoothDeviceManager {
       // Clean up if connection failed
       if (_connectedDevice != null) {
         try {
-          await _connectedDevice!.disconnect();
+          await _bluetoothService!.disconnectDevice(_connectedDevice!);
         } catch (_) {}
         _connectedDevice = null;
       }
@@ -247,7 +266,6 @@ class BluetoothDeviceManager {
       // Create device from ID
       final device = BluetoothDevice(
         remoteId: DeviceIdentifier(savedDeviceId),
-        //   platformName: prefs.getString('obd_device_name') ?? 'Unknown',
       );
 
       return await connectToDevice(device);
@@ -268,7 +286,9 @@ class BluetoothDeviceManager {
     _updateStatus(ConnectionStatus.disconnecting);
 
     try {
-      await _connectedDevice!.disconnect();
+      if (_bluetoothService != null) {
+        await _bluetoothService!.disconnectDevice(_connectedDevice!);
+      }
       _log.info('Device disconnected');
     } catch (e) {
       _log.warning('Error disconnecting: $e');

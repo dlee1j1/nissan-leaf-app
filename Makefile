@@ -21,6 +21,7 @@ setup:
 	cd nissan_leaf_app && flutter pub add path
 	cd nissan_leaf_app && flutter pub add path_provider
 	cd nissan_leaf_app && flutter pub add sqflite_common_ffi --dev
+	cd nissan_leaf_app && flutter pub add mocktail --dev
 	cd nissan_leaf_app && flutter pub add meta
 	cd nissan_leaf_app && flutter pub add fl_chart
 	cd nissan_leaf_app && flutter pub add intl
@@ -50,10 +51,10 @@ clean:
 	cd nissan_leaf_app && flutter clean
 
 repomix:
-	repomix -o app-base.rmx --include "nissan_leaf_app/lib/*.dart,.devcontainer,.vscode/**/*,.env,.gitignore,docker*,Makefile,process-test-file.sh,setup-android-debugging.ps1"  
-	repomix -o data.rmx nissan_leaf_app/lib/data nissan_leaf_app/test/data 
-	repomix -o UI-components.rmx nissan_leaf_app/lib/components nissan_leaf_app/test/components
-	repomix -o obd.rmx nissan_leaf_app/lib/obd nissan_leaf_app/test/obd
+	repomix -o app-base.rmx --include "nissan_leaf_app/lib/*.dart,.devcontainer,.vscode/**/*.json,.env,.gitignore,docker*,Makefile,process-test-file.sh,setup-android-debugging.ps1"  
+	repomix -o data.rmx --include "nissan_leaf_app/lib/data/*.dart,nissan_leaf_app/test/data/*.dart" 
+	repomix -o UI-components.rmx --include "nissan_leaf_app/lib/components/*.dart,nissan_leaf_app/test/components/*.dart,nissan_leaf_app/lib/pages/*.dart"
+	repomix -o obd.rmx --include "nissan_leaf_app/lib/obd/*.dart,nissan_leaf_app/test/obd/*.dart"
 	
 
 # Docker stuff - this stuff runs outside the container
