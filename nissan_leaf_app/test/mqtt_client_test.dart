@@ -2,11 +2,28 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:nissan_leaf_app/mqtt_client.dart' as app;
 import 'package:nissan_leaf_app/mqtt_settings.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:mocktail/mocktail.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 
 // Mocking is challenging for MQTT client, so we'll test basic functionality
 
+// Create mock classes
+class MockConnectivity extends Mock implements Connectivity {}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  // Set up mocks
+  late MockConnectivity mockConnectivity;
+
+  setUp(() {
+    // Replace the real implementation with our mock
+    mockConnectivity = MockConnectivity();
+
+    // Mock successful connectivity check
+    when(() => mockConnectivity.checkConnectivity())
+        .thenAnswer((_) async => [ConnectivityResult.wifi]);
+  });
 
   group('MqttClient', () {
     late app.MqttClient mqttClient;
@@ -14,7 +31,7 @@ void main() {
 
     setUp(() {
       SharedPreferences.setMockInitialValues({});
-      mqttClient = app.MqttClient.instance;
+      mqttClient = app.MqttClient.constructorForTest(mockConnectivity);
       settings = MqttSettings(
         broker: 'test.mosquitto.org',
         port: 1883,
@@ -38,7 +55,6 @@ void main() {
       expect(mqttClient.settings?.broker, equals('test.mosquitto.org'));
       expect(mqttClient.settings?.port, equals(1883));
     });
-
 /*
     test('generates correct status updates', () async {
       // Create a stream subscription to test status updates

@@ -15,24 +15,6 @@ setup:
 	ln -sf /opt/android-tools /opt/flutter/bin/cache/artifacts/engine
 	ln -sf nissan_leaf_app/.dart_tool .
 	cd nissan_leaf_app && flutter config --enable-linux-desktop
-	cd nissan_leaf_app && flutter pub add flutter_blue_plus
-	cd nissan_leaf_app && flutter pub add sqflite
-	cd nissan_leaf_app && flutter pub add http
-	cd nissan_leaf_app && flutter pub add path
-	cd nissan_leaf_app && flutter pub add path_provider
-	cd nissan_leaf_app && flutter pub add sqflite_common_ffi --dev
-	cd nissan_leaf_app && flutter pub add mocktail --dev
-	cd nissan_leaf_app && flutter pub add meta
-	cd nissan_leaf_app && flutter pub add fl_chart
-	cd nissan_leaf_app && flutter pub add intl
-	cd nissan_leaf_app && flutter pub add flutter_background_service
-	cd nissan_leaf_app && flutter pub add flutter_background_service_android
-	cd nissan_leaf_app && flutter pub add flutter_local_notifications
-	cd nissan_leaf_app && flutter pub add permission_handler
-	cd nissan_leaf_app && flutter pub add shared_preferences
-	cd nissan_leaf_app && flutter pub add flutter_secure_storage
-	cd nissan_leaf_app && flutter pub add mqtt_client
-	cd nissan_leaf_app && flutter pub add connectivity_plus
 	cd nissan_leaf_app && flutter pub get
 
 test:

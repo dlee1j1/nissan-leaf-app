@@ -23,9 +23,13 @@ class MqttClient {
   // Static instance for singleton pattern
   static final MqttClient _instance = MqttClient._internal();
   static MqttClient get instance => _instance;
+  final Connectivity _connectivity;
 
   // Private constructor for singleton
-  MqttClient._internal();
+  MqttClient._internal() : _connectivity = Connectivity();
+
+  MqttClient.constructorForTest([Connectivity? connectivity])
+      : _connectivity = connectivity ?? Connectivity();
 
   // MQTT client instance
   MqttServerClient? _client;
@@ -87,7 +91,7 @@ class MqttClient {
     }
 
     // Check network connectivity
-    final connectivityResults = await Connectivity().checkConnectivity();
+    final connectivityResults = await _connectivity.checkConnectivity();
     if (!connectivityResults.any((result) => result != ConnectivityResult.none)) {
       _log.warning('Cannot connect: No network connectivity');
       _updateStatus(MqttConnectionStatus.error);
