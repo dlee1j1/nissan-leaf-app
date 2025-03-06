@@ -55,3 +55,7 @@ reference/
 
 # all generated files
 [Gg]enerated*
+
+# touch files
+.test_timestamp
+.docker-build-stamp

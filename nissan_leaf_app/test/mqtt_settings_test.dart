@@ -1,41 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nissan_leaf_app/mqtt_settings.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-
-// Mock secure storage
-class MockFlutterSecureStorage extends FlutterSecureStorage {
-  final Map<String, String> _storage = {};
-
-  @override
-  Future<String?> read(
-      {required String key,
-      AndroidOptions? aOptions,
-      IOSOptions? iOptions,
-      LinuxOptions? lOptions}) async {
-    return _storage[key];
-  }
-
-  @override
-  Future<void> write({
-    required String key,
-    required String? value,
-    IOSOptions? iOptions = IOSOptions.defaultOptions,
-    AndroidOptions? aOptions,
-    LinuxOptions? lOptions,
-  }) async {
-    _storage[key] = value!;
-  }
-
-  @override
-  Future<void> delete(
-      {required String key,
-      AndroidOptions? aOptions,
-      IOSOptions? iOptions,
-      LinuxOptions? lOptions}) async {
-    _storage.remove(key);
-  }
-}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();

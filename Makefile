@@ -17,8 +17,22 @@ setup:
 	cd nissan_leaf_app && flutter config --enable-linux-desktop
 	cd nissan_leaf_app && flutter pub get
 
-test:
-	cd nissan_leaf_app && flutter test
+DART_FILES := $(shell find nissan_leaf_app/lib nissan_leaf_app/test -name "*.dart")
+TEST_TIMESTAMP := .test_timestamp
+
+# Main test target that checks if tests need to run
+test: $(TEST_TIMESTAMP)
+
+$(TEST_TIMESTAMP): $(DART_FILES)
+	@echo "Changes detected, running tests..."
+	cd nissan_leaf_app && flutter test && touch $(TEST_TIMESTAMP)
+
+# fix permissions to let WSL test runner to work (in addition to the container) 
+fix-permissions:
+	chmod -R go+w nissan_leaf_app/lib nissan_leaf_app/test /app/build \
+	 /opt/flutter/bin/cache /opt/android-tools /opt/android-sdk-linux \
+	 nissan_leaf_app/.dart_tool nissan_leaf_app/build $(TEST_TIMESTAMP)
+	@echo "Permissions fixed for both WSL and container access"
 
 analyze:
 	cd nissan_leaf_app && flutter analyze | grep -v "info •"
