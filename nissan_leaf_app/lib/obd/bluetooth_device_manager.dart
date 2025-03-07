@@ -345,6 +345,41 @@ class BluetoothDeviceManager {
     }
   }
 
+  //
+  // Aggressive Reconnection
+  //
+  Timer? _foregroundReconnectionTimer;
+
+  // Start aggressive foreground reconnection attempts
+  void startForegroundReconnection() {
+    // Cancel any existing timer
+    stopForegroundReconnection();
+
+    // Only start if not already connected
+    if (isConnected) return;
+
+    _log.info('Starting foreground reconnection attempts');
+
+    // Try immediately first
+    autoConnectToObd();
+
+    // Then set up timer for repeated attempts every 5 seconds
+    _foregroundReconnectionTimer = Timer.periodic(Duration(seconds: 5), (_) {
+      if (!isConnected) {
+        autoConnectToObd();
+      } else {
+        // Stop if we're connected
+        stopForegroundReconnection();
+      }
+    });
+  }
+
+  // Stop aggressive reconnection
+  void stopForegroundReconnection() {
+    _foregroundReconnectionTimer?.cancel();
+    _foregroundReconnectionTimer = null;
+  }
+
   /// Set up mock mode for testing
   void enableMockMode({
     String? mockResponse,

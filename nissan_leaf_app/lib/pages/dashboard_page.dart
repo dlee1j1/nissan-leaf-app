@@ -17,7 +17,7 @@ class DashboardPage extends StatefulWidget {
   State<DashboardPage> createState() => _DashboardPageState();
 }
 
-class _DashboardPageState extends State<DashboardPage> {
+class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserver {
   final ReadingsDatabase _db = ReadingsDatabase();
   final BluetoothDeviceManager _deviceManager = BluetoothDeviceManager.instance;
 
@@ -38,9 +38,22 @@ class _DashboardPageState extends State<DashboardPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _setupConnectionListener();
     _setupMqttListener();
     _initializeData();
+    _deviceManager.startForegroundReconnection();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      // App comes to foreground - start aggressive reconnection
+      _deviceManager.startForegroundReconnection();
+    } else if (state == AppLifecycleState.paused) {
+      // App goes to background - stop aggressive reconnection
+      _deviceManager.stopForegroundReconnection();
+    }
   }
 
   void _setupConnectionListener() {
@@ -382,6 +395,8 @@ class _DashboardPageState extends State<DashboardPage> {
   void dispose() {
     _mqttStatusSubscription?.cancel();
     _connectionStatusSubscription?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    _deviceManager.stopForegroundReconnection();
     _db.close();
     super.dispose();
   }
