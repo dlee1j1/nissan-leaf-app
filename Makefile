@@ -25,7 +25,7 @@ test: $(TEST_TIMESTAMP)
 
 $(TEST_TIMESTAMP): $(DART_FILES)
 	@echo "Changes detected, running tests..."
-	cd nissan_leaf_app && flutter test && touch $(TEST_TIMESTAMP)
+	cd nissan_leaf_app && flutter test && touch ../$(TEST_TIMESTAMP)
 
 # fix permissions to let WSL test runner to work (in addition to the container) 
 fix-permissions:
@@ -34,14 +34,21 @@ fix-permissions:
 	 nissan_leaf_app/.dart_tool nissan_leaf_app/build $(TEST_TIMESTAMP)
 	@echo "Permissions fixed for both WSL and container access"
 
+check-adb:
+	@echo "Checking ADB status..."
+	@which adb > /dev/null || (echo "Error: ADB not found in PATH" && exit 1)
+	@adb start-server > /dev/null || (echo "Error: ADB did not start. Likely need to restart the docker container: docker-compose down && make docker-shell " && exit 1)
+	@adb devices | grep -q "device$$" || (echo "Error: No devices connected or authorized. Check ADB devices list:" && adb devices && exit 1)
+	@echo "ADB is running and devices are available."
+
 analyze:
 	cd nissan_leaf_app && flutter analyze | grep -v "info •"
 
 linux: test # doesn't work due to issues with bluetooth and X inside the container. maybe it will work in a linux environment? 
 	cd nissan_leaf_app && flutter run -d linux
 
-android: test
-	cd nissan_leaf_app && flutter run -d 09091FDD4007XX 
+android: check-adb test
+	cd nissan_leaf_app && flutter run -d $(shell adb devices | grep -v "List" | grep "device$$" | head -1 | cut -f1)
 
 web: test
 	cd nissan_leaf_app && flutter run -d web-server --web-hostname=0.0.0.0 --web-port=8080
