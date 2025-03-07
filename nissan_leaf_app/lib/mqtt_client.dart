@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:meta/meta.dart';
 import 'package:mqtt_client/mqtt_client.dart';
 import 'package:mqtt_client/mqtt_server_client.dart';
 import 'package:simple_logger/simple_logger.dart';
@@ -23,13 +24,15 @@ class MqttClient {
   // Static instance for singleton pattern
   static final MqttClient _instance = MqttClient._internal();
   static MqttClient get instance => _instance;
-  final Connectivity _connectivity;
+  Connectivity _connectivity = Connectivity();
 
   // Private constructor for singleton
-  MqttClient._internal() : _connectivity = Connectivity();
+  MqttClient._internal();
 
-  MqttClient.constructorForTest([Connectivity? connectivity])
-      : _connectivity = connectivity ?? Connectivity();
+  @visibleForTesting
+  void setConnectivityForTest(Connectivity c) {
+    _connectivity = c;
+  }
 
   // MQTT client instance
   MqttServerClient? _client;

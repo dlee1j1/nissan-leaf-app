@@ -1,6 +1,7 @@
 // lib/obd/bluetooth_device_manager.dart - modified version
 import 'dart:async';
 import 'dart:io' show Platform;
+import 'package:flutter/foundation.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:simple_logger/simple_logger.dart';
@@ -22,23 +23,16 @@ class BluetoothDeviceManager {
   // Singleton pattern
   static final BluetoothDeviceManager _instance = BluetoothDeviceManager._internal();
   static BluetoothDeviceManager get instance => _instance;
-
-  // Allow dependency injection for testing
-  factory BluetoothDeviceManager({BluetoothServiceInterface? bluetoothService}) {
-    if (bluetoothService != null) {
-      _instance._bluetoothService = bluetoothService;
-    }
-
-    _instance._bluetoothService ??= FlutterBluetoothService();
-    return _instance;
-  }
-
   BluetoothDeviceManager._internal();
 
-  final _log = SimpleLogger();
+  // Allow dependency injection for testing
+  BluetoothServiceInterface _bluetoothService = FlutterBluetoothService();
+  @visibleForTesting
+  void setBluetoothServiceForTesting(BluetoothServiceInterface bluetoothService) {
+    _bluetoothService = bluetoothService;
+  }
 
-  // Dependencies
-  BluetoothServiceInterface? _bluetoothService;
+  final _log = SimpleLogger();
 
   // State variables
   BluetoothDevice? _connectedDevice;
@@ -99,23 +93,20 @@ class BluetoothDeviceManager {
     List<String> nameFilters = const ["OBDBLE"],
   }) async {
     if (!_isInitialized) await initialize();
-    if (_bluetoothService == null) {
-      throw StateError('BluetoothService not initialized');
-    }
 
     _log.info('Starting Bluetooth scan for devices...');
     _updateStatus(ConnectionStatus.scanning);
 
     try {
       // Ensure Bluetooth is on
-      final isOn = await _bluetoothService!.isBluetoothOn();
+      final isOn = await _bluetoothService.isBluetoothOn();
       if (!isOn) {
         _log.info('Bluetooth is off, attempting to turn on');
-        await _bluetoothService!.turnOnBluetooth();
+        await _bluetoothService.turnOnBluetooth();
       }
 
       // Start the scan
-      final results = await _bluetoothService!.scanForDevices(
+      final results = await _bluetoothService.scanForDevices(
         timeout: timeout,
         nameFilters: nameFilters,
       );
@@ -132,9 +123,7 @@ class BluetoothDeviceManager {
 
   /// Connect to a specific Bluetooth device
   Future<bool> connectToDevice(BluetoothDevice device) async {
-    if (_bluetoothService == null) {
-      throw StateError('BluetoothService not initialized');
-    }
+    if (!_isInitialized) await initialize();
 
     if (_isConnecting) {
       _log.warning('Already connecting to a device, ignoring request');
@@ -157,7 +146,7 @@ class BluetoothDeviceManager {
 
       while (!connected && tries < maxRetries) {
         try {
-          connected = await _bluetoothService!.connectToDevice(device);
+          connected = await _bluetoothService.connectToDevice(device);
           if (!connected) {
             tries++;
             _log.info('Connection attempt $tries failed');
@@ -182,7 +171,7 @@ class BluetoothDeviceManager {
           ConnectionStatus.connected, 'Connected to ${device.platformName}. Initializing...');
 
       // Discover services
-      var services = await _bluetoothService!.discoverServices(device);
+      var services = await _bluetoothService.discoverServices(device);
       _log.info('Found ${services.length} services');
 
       // Find our target service
@@ -205,6 +194,7 @@ class BluetoothDeviceManager {
       _log.info('Using characteristic ${_characteristic!.uuid}');
 
       // Create and initialize ObdController
+      // TODO: clean up obdController initialization esp w.r.t. OBDCommand
       _obdController = ObdController(_characteristic!);
       await _obdController!.initialize();
 
@@ -229,7 +219,7 @@ class BluetoothDeviceManager {
       // Clean up if connection failed
       if (_connectedDevice != null) {
         try {
-          await _bluetoothService!.disconnectDevice(_connectedDevice!);
+          await _bluetoothService.disconnectDevice(_connectedDevice!);
         } catch (_) {}
         _connectedDevice = null;
       }
@@ -286,9 +276,7 @@ class BluetoothDeviceManager {
     _updateStatus(ConnectionStatus.disconnecting);
 
     try {
-      if (_bluetoothService != null) {
-        await _bluetoothService!.disconnectDevice(_connectedDevice!);
-      }
+      await _bluetoothService.disconnectDevice(_connectedDevice!);
       _log.info('Device disconnected');
     } catch (e) {
       _log.warning('Error disconnecting: $e');

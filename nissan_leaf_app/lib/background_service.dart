@@ -21,6 +21,7 @@ const String _serviceEnabledKey = 'background_service_enabled';
 const String _collectionFrequencyKey = 'collection_frequency_minutes';
 const int _defaultFrequency = 15; // 15 minutes default
 
+//TODO: test background service using mocktail
 class BackgroundService {
   static final _log = SimpleLogger();
   static final FlutterBackgroundService _service = FlutterBackgroundService();

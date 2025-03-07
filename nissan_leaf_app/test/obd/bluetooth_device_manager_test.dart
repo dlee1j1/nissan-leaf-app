@@ -106,7 +106,8 @@ void main() {
 
     // Initialize test helper and manager
     bluetoothHelper = BluetoothServiceTestHelper();
-    manager = BluetoothDeviceManager(bluetoothService: bluetoothHelper.mock);
+    manager = BluetoothDeviceManager.instance;
+    manager.setBluetoothServiceForTesting(bluetoothHelper.mock);
 
     // Initialize manager - permissions will be automatically skipped in test environment
     // since it's neither Android nor iOS

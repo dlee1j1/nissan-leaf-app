@@ -31,7 +31,8 @@ void main() {
 
     setUp(() {
       SharedPreferences.setMockInitialValues({});
-      mqttClient = app.MqttClient.constructorForTest(mockConnectivity);
+      mqttClient = app.MqttClient.instance;
+      mqttClient.setConnectivityForTest(mockConnectivity);
       settings = MqttSettings(
         broker: 'test.mosquitto.org',
         port: 1883,
