@@ -288,6 +288,63 @@ class BluetoothDeviceManager {
     }
   }
 
+  Future<bool> autoConnectToObd() async {
+    // First try reconnecting to a saved device
+    if (await reconnectToSavedDevice()) {
+      return true;
+    }
+
+    // If no saved device or reconnection failed, scan for devices
+    try {
+      final results = await scanForDevices();
+
+      // Sort devices to prioritize those with OBD-related names
+      var potentialDevices = results.toList();
+      potentialDevices.sort((a, b) {
+        bool aHasObdName =
+            a.device.platformName.contains("OBD") || a.device.platformName.contains("ELM");
+        bool bHasObdName =
+            b.device.platformName.contains("OBD") || b.device.platformName.contains("ELM");
+
+        if (aHasObdName && !bHasObdName) return -1;
+        if (!aHasObdName && bHasObdName) return 1;
+        return 0;
+      });
+
+      // Try to connect to each device and test initialization
+      for (var result in potentialDevices) {
+        _log.info('Attempting connection to ${result.device.platformName}');
+
+        // Attempt connection
+        if (await connectToDevice(result.device)) {
+          // Test if we can successfully run a probe command
+          try {
+            // Just use the command's run() method directly
+            var probeResult = await OBDCommand.probe.run();
+
+            // If we get any response, we likely have a valid OBD device
+            if (probeResult.isNotEmpty) {
+              _log.info('Successfully connected to OBD device: ${result.device.platformName}');
+              return true;
+            } else {
+              _log.info('Device responded but returned empty probe result, trying next device');
+              await disconnect();
+            }
+          } catch (e) {
+            _log.info('Device failed OBD probe test: $e');
+            await disconnect();
+          }
+        }
+      }
+
+      _log.warning('No valid OBD devices found after scanning');
+      return false;
+    } catch (e) {
+      _log.warning('Auto-connection error: $e');
+      return false;
+    }
+  }
+
   /// Set up mock mode for testing
   void enableMockMode({
     String? mockResponse,

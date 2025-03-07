@@ -336,17 +336,15 @@ void _onStart(ServiceInstance service) async {
       if (!deviceManager.isConnected && !isMockMode) {
         try {
           // Try to reconnect to saved device
-          bool connected = await deviceManager.reconnectToSavedDevice();
+          bool connected = await deviceManager.autoConnectToObd();
 
           if (!connected) {
-            log.info('Could not connect to OBD device, using mock data');
-            deviceManager.enableMockMode();
-            isMockMode = true;
+            log.warning('Failed to connect to OBD device, skipping data collection');
+            return;
           }
         } catch (e) {
           log.warning('Error connecting to OBD device: $e');
-          deviceManager.enableMockMode();
-          isMockMode = true;
+          return;
         }
       }
 

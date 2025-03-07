@@ -94,7 +94,7 @@ class _MainScreenState extends State<MainScreen> {
     }
 
     // Try to reconnect to the last device
-    await _deviceManager.reconnectToSavedDevice();
+    await _deviceManager.autoConnectToObd();
 
     setState(() {
       _isInitializing = false;
