@@ -17,6 +17,13 @@ setup:
 	cd nissan_leaf_app && flutter config --enable-linux-desktop
 	cd nissan_leaf_app && flutter pub get
 
+# fix permissions to let WSL test runner to work (in addition to the container) 
+fix-permissions:
+	chmod -R go+w nissan_leaf_app/lib nissan_leaf_app/test /app/build \
+	 /opt/flutter/bin/cache /opt/android-tools /opt/android-sdk-linux \
+	 nissan_leaf_app/.dart_tool nissan_leaf_app/build $(TEST_TIMESTAMP)
+	@echo "Permissions fixed for both WSL and container access"
+
 DART_FILES := $(shell find nissan_leaf_app/lib nissan_leaf_app/test -name "*.dart")
 TEST_TIMESTAMP := .test_timestamp
 
@@ -26,13 +33,10 @@ test: $(TEST_TIMESTAMP)
 $(TEST_TIMESTAMP): $(DART_FILES)
 	@echo "Changes detected, running tests..."
 	cd nissan_leaf_app && flutter test && touch ../$(TEST_TIMESTAMP)
+force-test: 
+	rm -f $(TEST_TIMESTAMP)
+	$(MAKE) test
 
-# fix permissions to let WSL test runner to work (in addition to the container) 
-fix-permissions:
-	chmod -R go+w nissan_leaf_app/lib nissan_leaf_app/test /app/build \
-	 /opt/flutter/bin/cache /opt/android-tools /opt/android-sdk-linux \
-	 nissan_leaf_app/.dart_tool nissan_leaf_app/build $(TEST_TIMESTAMP)
-	@echo "Permissions fixed for both WSL and container access"
 
 check-adb:
 	@echo "Checking ADB status..."
@@ -56,12 +60,16 @@ web: test
 clean:
 	cd nissan_leaf_app && flutter clean
 
+# Repomix targets that delegate to the repomix subdirectory
 repomix:
-	repomix -o app-base.rmx --include "nissan_leaf_app/lib/*.dart,.devcontainer,.vscode/**/*.json,.env,.gitignore,docker*,Makefile,process-test-file.sh,setup-android-debugging.ps1"  
-	repomix -o data.rmx --include "nissan_leaf_app/lib/data/*.dart,nissan_leaf_app/test/data/*.dart" 
-	repomix -o UI-components.rmx --include "nissan_leaf_app/lib/components/*.dart,nissan_leaf_app/test/components/*.dart,nissan_leaf_app/lib/pages/*.dart"
-	repomix -o obd.rmx --include "nissan_leaf_app/lib/obd/*.dart,nissan_leaf_app/test/obd/*.dart"
-	
+	$(MAKE) -C repomix all
+
+repomix-clean:
+	$(MAKE) -C repomix clean
+
+repomix-force:
+	$(MAKE) -C repomix force
+
 
 # Docker stuff - this stuff runs outside the container
 docker-build: .docker-build-stamp 
