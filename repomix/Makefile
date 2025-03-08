@@ -1,5 +1,5 @@
 # Define include patterns (without quotes)
-APP_INCLUDE := nissan_leaf_app/lib/*.dart,.devcontainer,.vscode/**/*.json,.env,.gitignore,docker*,Makefile,process-test-file.sh,setup-android-debugging.ps1
+APP_INCLUDE := nissan_leaf_app/lib/*.dart,.devcontainer,.vscode/**/*.json,.env,.gitignore,docker*,Makefile,process-test-file.sh,setup-android-debugging.ps1,repomix/Makefile
 DATA_INCLUDE := nissan_leaf_app/lib/data/*.dart,nissan_leaf_app/test/data/*.dart
 UI_INCLUDE := nissan_leaf_app/lib/components/*.dart,nissan_leaf_app/test/components/*.dart,nissan_leaf_app/lib/pages/*.dart
 OBD_INCLUDE := nissan_leaf_app/lib/obd/*.dart,nissan_leaf_app/test/obd/*.dart
