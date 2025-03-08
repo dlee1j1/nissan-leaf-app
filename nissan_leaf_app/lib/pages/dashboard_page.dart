@@ -1,11 +1,11 @@
 // lib/components/dashboard_page.dart (updated version)
 import 'package:flutter/material.dart';
+import 'package:nissan_leaf_app/background_service.dart';
 import 'package:nissan_leaf_app/components/log_viewer.dart';
 import 'package:nissan_leaf_app/mqtt_client.dart';
 import 'dart:async';
 import '../data/reading_model.dart';
 import '../data/readings_db.dart';
-import '../obd/obd_command.dart';
 import '../obd/bluetooth_device_manager.dart';
 import '../components/battery_status_widget.dart';
 import '../components/service_control_widget.dart';
@@ -43,14 +43,14 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     _setupConnectionListener();
     _setupMqttListener();
     _initializeData();
-    _deviceManager.startForegroundReconnection();
+    // TODO: refresh the page if it's been a while
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       // App comes to foreground - start aggressive reconnection
-      _deviceManager.startForegroundReconnection();
+      // TODO: refresh the page if it's been a while
     } else if (state == AppLifecycleState.paused) {
       // App goes to background - stop aggressive reconnection
       _deviceManager.stopForegroundReconnection();
@@ -107,72 +107,51 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   }
 
   Future<void> _refreshCurrentReading() async {
-    Reading? reading;
     try {
-      if (!_deviceManager.isInMockMode) await _deviceManager.autoConnectToObd();
       setState(() {
         _isLoadingCurrent = true;
         _errorMessage = null;
       });
 
-      // Collect battery data from the vehicle
-      final batteryData = await _deviceManager.runCommand(OBDCommand.lbc);
-      final rangeData = await _deviceManager.runCommand(OBDCommand.rangeRemaining);
+      // Perform manual collection
+      bool success = await BackgroundService.collectManually();
+      final latestReading = await _db.getMostRecentReading();
 
-      if (batteryData.isEmpty) {
+      if (success) {
+        // Collection succeeded, reading is the latest from the database
         setState(() {
+          _currentReading = latestReading;
           _isLoadingCurrent = false;
-          _errorMessage = 'Failed to retrieve battery data';
+
+          // Add to the readings list and resort
+          _readings.add(latestReading!);
+          _readings.sort((a, b) => a.timestamp.compareTo(b.timestamp));
         });
         return;
       }
 
-      // Create a reading object from the collected data
-      final stateOfCharge = (batteryData['state_of_charge'] as num?)?.toDouble() ?? 0.0;
-      final batteryHealth = (batteryData['hv_battery_health'] as num?)?.toDouble() ?? 0.0;
-      final batteryVoltage = (batteryData['hv_battery_voltage'] as num?)?.toDouble() ?? 0.0;
-      final batteryCapacity = (batteryData['hv_battery_Ah'] as num?)?.toDouble() ?? 0.0;
-      final estimatedRange = (rangeData['range_remaining'] as num?)?.toDouble() ?? 0.0;
-
-      reading = Reading(
-        timestamp: DateTime.now(),
-        stateOfCharge: stateOfCharge,
-        batteryHealth: batteryHealth,
-        batteryVoltage: batteryVoltage,
-        batteryCapacity: batteryCapacity,
-        estimatedRange: estimatedRange,
-      );
-
-      // Save the reading to the database
-      await _db.insertReading(reading);
-
-      // Update the state
+      // If we get here, either collection failed or no reading was found
       setState(() {
-        _currentReading = reading;
         _isLoadingCurrent = false;
-
-        // Add to the readings list and resort
-        _readings.add(reading!);
-        _readings.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+        _errorMessage = 'Failed to retrieve battery data';
       });
-      return;
+
+      // Try to use the existing reading if available
+      if (_currentReading == null) {
+        setState(() {
+          _currentReading = latestReading;
+        });
+
+        if (latestReading == null) {
+          setState(() {
+            _errorMessage = 'No OBD connection or historical data available';
+          });
+        }
+      }
     } catch (e) {
       setState(() {
         _isLoadingCurrent = false;
         _errorMessage = 'Failed to refresh data: ${e.toString()}';
-      });
-    }
-
-    // If we're not connected, try to use the latest reading from the database
-    reading ??= await _db.getMostRecentReading();
-    setState(() {
-      _currentReading = reading;
-    });
-
-    // If no reading available, show error
-    if (reading == null) {
-      setState(() {
-        _errorMessage = 'No OBD connection or historical data available';
       });
     }
   }

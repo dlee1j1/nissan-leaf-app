@@ -156,6 +156,61 @@ class BackgroundService {
     return _service.on('status');
   }
 
+  // run the collection code
+  static Future<bool> collectManually() async {
+    // For web platform, use direct simulation
+    if (_isWebPlatform) {
+      try {
+        _simulateWebCollection();
+        return true;
+      } catch (e) {
+        _log.severe('Error in web collection: $e');
+        return false;
+      }
+    }
+
+    // For non-web, check if the service is running
+    if (!await isServiceRunning()) {
+      _log.warning('Background service not running - cannot collect data');
+      return false;
+    }
+
+    // Create a completer to wait for the result
+    final completer = Completer<bool>();
+
+    // Set up a subscription to catch the result
+    StreamSubscription? statusSubscription;
+    statusSubscription = getStatusStream().listen((status) {
+      if (status == null) return;
+
+      // Check if this is a collection result
+      if (status.containsKey('collecting') && status['collecting'] == false) {
+        // Collection completed
+        statusSubscription?.cancel();
+
+        // Check if there was an error
+        if (status.containsKey('error')) {
+          completer.complete(false);
+          return;
+        }
+
+        completer.complete(true);
+      }
+    });
+
+    // Trigger the collection
+    _service.invoke('manualCollect', {});
+
+    // Wait for result with timeout
+    try {
+      return await completer.future.timeout(const Duration(seconds: 10));
+    } catch (e) {
+      statusSubscription.cancel();
+      _log.warning('Timeout waiting for collection result');
+      return false;
+    }
+  }
+
   /// Set the data collection frequency in minutes
   static Future<void> setCollectionFrequency(int minutes) async {
     if (minutes < 1) {
@@ -332,48 +387,17 @@ void _onStart(ServiceInstance service) async {
       service.invoke(
           'status', {'collecting': true, 'lastCollection': DateTime.now().toIso8601String()});
 
-      // Try to use actual OBD connection if available, fallback to mock
-      if (!deviceManager.isConnected && !isMockMode) {
-        try {
-          // Try to reconnect to saved device
-          bool connected = await deviceManager.autoConnectToObd();
+      // Use centralized method
+      final carData = await deviceManager.collectCarData();
 
-          if (!connected) {
-            log.warning('Failed to connect to OBD device, skipping data collection');
-            return;
-          }
-        } catch (e) {
-          log.warning('Error connecting to OBD device: $e');
-          return;
-        }
-      }
-
-      // Collect battery data
-      final batteryData = await deviceManager.runCommand(OBDCommand.lbc);
-      final rangeData = await deviceManager.runCommand(OBDCommand.rangeRemaining);
-
-      if (batteryData.isEmpty) {
+      if (carData == null) {
         log.warning('Failed to retrieve battery data');
         // Update status with error
         service.invoke('status', {'error': 'Failed to retrieve battery data'});
         return;
       }
 
-      // Create a reading object from the collected data
-      final stateOfCharge = (batteryData['state_of_charge'] as num?)?.toDouble() ?? 0.0;
-      final batteryHealth = (batteryData['hv_battery_health'] as num?)?.toDouble() ?? 0.0;
-      final batteryVoltage = (batteryData['hv_battery_voltage'] as num?)?.toDouble() ?? 0.0;
-      final batteryCapacity = (batteryData['hv_battery_Ah'] as num?)?.toDouble() ?? 0.0;
-      final estimatedRange = (rangeData['range_remaining'] as num?)?.toDouble() ?? 0.0;
-
-      final reading = Reading(
-        timestamp: DateTime.now(),
-        stateOfCharge: stateOfCharge,
-        batteryHealth: batteryHealth,
-        batteryVoltage: batteryVoltage,
-        batteryCapacity: batteryCapacity,
-        estimatedRange: estimatedRange,
-      );
+      final reading = Reading.fromObdMap(carData);
 
       // Generate a unique session ID if we're starting a new session
       // A new session is defined as being more than 30 minutes since the last collection
@@ -395,11 +419,11 @@ void _onStart(ServiceInstance service) async {
       if (mqttClient.isConnected) {
         try {
           await mqttClient.publishBatteryData(
-            stateOfCharge: stateOfCharge,
-            batteryHealth: batteryHealth,
-            batteryVoltage: batteryVoltage,
-            batteryCapacity: batteryCapacity,
-            estimatedRange: estimatedRange,
+            stateOfCharge: reading.stateOfCharge,
+            batteryHealth: reading.batteryHealth,
+            batteryVoltage: reading.batteryVoltage,
+            batteryCapacity: reading.batteryCapacity,
+            estimatedRange: reading.estimatedRange,
             sessionId: sessionId,
           );
           log.info('Published data to MQTT');
@@ -411,22 +435,22 @@ void _onStart(ServiceInstance service) async {
       service.invoke('status', {
         'collecting': false,
         'lastCollection': lastCollectionTime!.toIso8601String(),
-        'stateOfCharge': stateOfCharge,
-        'batteryHealth': batteryHealth,
-        'estimatedRange': estimatedRange,
+        'stateOfCharge': reading.stateOfCharge,
+        'batteryHealth': reading.batteryHealth,
+        'estimatedRange': reading.estimatedRange,
         'sessionId': sessionId
       });
 
       log.info(
-          'Successfully collected and stored battery data. SOC: $stateOfCharge%, Health: $batteryHealth%');
-
+          'Successfully collected and stored battery data. SOC: ${reading.stateOfCharge}%, Health: ${reading.batteryHealth}%');
+    } catch (e, stackTrace) {
+      log.severe('Error collecting data: $e\n$stackTrace');
+      service.invoke('status', {'error': e.toString(), 'collecting': false});
+    } finally {
       // Disconnect to save battery if we're not using mock mode
       if (deviceManager.isConnected && !isMockMode) {
         await deviceManager.disconnect();
       }
-    } catch (e, stackTrace) {
-      log.severe('Error collecting data: $e\n$stackTrace');
-      service.invoke('status', {'error': e.toString(), 'collecting': false});
     }
   }
 

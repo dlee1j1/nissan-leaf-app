@@ -417,7 +417,7 @@ class BluetoothDeviceManager {
     }
   }
 
-  Future<Map<String, dynamic>?> collectDataFromOBD({bool disconnectAfter = true}) async {
+  Future<Map<String, dynamic>?> collectCarData({bool disconnectAfter = true}) async {
     if (!isConnected && !isInMockMode) {
       try {
         bool connected = await autoConnectToObd();

@@ -55,6 +55,17 @@ class Reading {
     );
   }
 
+  factory Reading.fromObdMap(Map<String, dynamic> odbData) {
+    return Reading(
+      timestamp: odbData['timeStamp'] ?? DateTime.now(),
+      stateOfCharge: (odbData['state_of_charge'] as num?)?.toDouble() ?? 00.0,
+      batteryHealth: (odbData['hv_battery_health'] as num?)?.toDouble() ?? 0.0,
+      batteryVoltage: (odbData['hv_battery_voltage'] as num?)?.toDouble() ?? 0.0,
+      batteryCapacity: (odbData['hv_battery_Ah'] as num?)?.toDouble() ?? 0.0,
+      estimatedRange: (odbData['range_remaining'] as num?)?.toDouble() ?? 0.0,
+    );
+  }
+
   // Create a copy of this Reading with the given fields replaced
   Reading copyWith({
     int? id,

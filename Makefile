@@ -1,4 +1,5 @@
-.PHONY: setup run clean
+.PHONY: setup run clean repomix 
+
 
 # Flutter section - this stuff runs inside the container
 
