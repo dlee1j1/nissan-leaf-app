@@ -6,12 +6,19 @@ OBD_INCLUDE := nissan_leaf_app/lib/obd/*.dart,nissan_leaf_app/test/obd/*.dart
 
 # Helper function to expand include patterns to file list
 # Usage: $(call get_source_files,include_pattern)
+
+
 define get_source_files
-$(patsubst %,../%,$(shell cd .. && find $(subst *,*,$(subst ,,$(1))) -type f 2>/dev/null))
+$(shell cd .. && find $(shell echo "$(1)" | tr ',' ' ') -type f 2>/dev/null | sed 's/^/..\//')
 endef
 
 # Default target
 all: app-base.rmx data.rmx UI-components.rmx obd.rmx
+
+debug:
+	@echo "Pattern: $(APP_INCLUDE)"
+	@echo "Expanded: $(call get_source_files,$(APP_INCLUDE))"
+
 
 # Rules with direct dependency tracking
 app-base.rmx: $(call get_source_files,$(APP_INCLUDE))
