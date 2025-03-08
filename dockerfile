@@ -8,9 +8,9 @@ ENV PATH=$PATH:$FLUTTER_HOME/bin:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$AND
 
 # Download and install repomix for communicating with LLMs
 RUN apt-get update && apt-get install -y npm && \
-   npm install -g n \
-   n stable \
-   npm install -g repomix
+   npm install -y n && \
+   n stable && \
+   npm install -y repomix
 
 # npm install -g nodemon
 

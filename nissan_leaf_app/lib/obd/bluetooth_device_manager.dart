@@ -42,6 +42,43 @@ class BluetoothDeviceManager {
   bool _isInitialized = false;
   bool _isInMockMode = false;
 
+  // Error tracking
+  String? _lastErrorMessage;
+  int _consecutiveFailures = 0;
+  final Map<String, DeviceErrorStats> _deviceErrorStats = {};
+  String? get lastError => _lastErrorMessage;
+  int get consecutiveFailures => _consecutiveFailures;
+
+  /// Record connection errors for analysis
+  void _recordConnectionError(BluetoothDevice device, String error) {
+    if (!_deviceErrorStats.containsKey(device.remoteId.str)) {
+      _deviceErrorStats[device.remoteId.str] = DeviceErrorStats();
+    }
+    _deviceErrorStats[device.remoteId.str]!.recordError(error);
+  }
+
+  /// Get error statistics for a device
+  @visibleForTesting
+  DeviceErrorStats? getDeviceErrorStats(String deviceId) {
+    return _deviceErrorStats[deviceId];
+  }
+
+  // For testing time-dependent behavior
+  Timer Function(Duration duration, Function() callback) _createTimer =
+      (duration, callback) => Timer(duration, callback);
+
+  Timer Function(Duration duration, Function(Timer) callback) _createPeriodicTimer =
+      (duration, callback) => Timer.periodic(duration, callback);
+
+  @visibleForTesting
+  void setTimerFactoriesForTesting({
+    Timer Function(Duration, Function())? createTimer,
+    Timer Function(Duration, Function(Timer))? createPeriodicTimer,
+  }) {
+    if (createTimer != null) _createTimer = createTimer;
+    if (createPeriodicTimer != null) _createPeriodicTimer = createPeriodicTimer;
+  }
+
   // Stream controllers for status updates
   final _connectionStatusController = StreamController<ConnectionStatus>.broadcast();
   Stream<ConnectionStatus> get connectionStatus => _connectionStatusController.stream;
@@ -141,29 +178,28 @@ class BluetoothDeviceManager {
     try {
       // Attempt to connect with retry logic
       const maxRetries = 3;
+      const pauseBetweenRetry = Duration(milliseconds: 500);
       var tries = 0;
       bool connected = false;
 
-      while (!connected && tries < maxRetries) {
+      while (!connected) {
+        String error = "";
         try {
           connected = await _bluetoothService.connectToDevice(device);
-          if (!connected) {
-            tries++;
-            _log.info('Connection attempt $tries failed');
-            await Future.delayed(const Duration(seconds: 2));
-          }
         } catch (e) {
           tries++;
-          _log.info('Connection attempt $tries failed: $e');
-          if (tries >= maxRetries) {
-            throw Exception('Failed to connect after $maxRetries attempts');
-          }
-          await Future.delayed(const Duration(seconds: 2));
+          error = '$e';
         }
-      }
 
-      if (!connected) {
-        throw Exception('Failed to connect after $maxRetries attempts');
+        if (connected) break;
+        tries++;
+        _log.info('Connection attempt $tries failed. $error');
+
+        if (tries < maxRetries) {
+          await Future.delayed(pauseBetweenRetry);
+        } else {
+          throw Exception('Failed to connect after $maxRetries attempts');
+        }
       }
 
       _connectedDevice = device;
@@ -211,10 +247,21 @@ class BluetoothDeviceManager {
       _updateStatus(ConnectionStatus.ready, 'Device ready');
       _log.info('Successfully connected to OBD device: ${device.platformName}');
 
+      // Reset failure counters on successful connection
+      _consecutiveFailures = 0;
+      if (_deviceErrorStats.containsKey(device.remoteId.str)) {
+        _deviceErrorStats[device.remoteId.str]!.resetConsecutiveFailures();
+      }
+
       return true;
     } catch (e) {
-      _log.severe('Error connecting to device: $e');
-      _updateStatus(ConnectionStatus.error, 'Connection error: $e');
+      _consecutiveFailures++;
+      _lastErrorMessage = 'Error connecting to device: $e';
+      _log.severe(_lastErrorMessage!);
+      _updateStatus(ConnectionStatus.error, _lastErrorMessage);
+
+      // Record device-specific error
+      _recordConnectionError(device, e.toString());
 
       // Clean up if connection failed
       if (_connectedDevice != null) {
@@ -234,7 +281,7 @@ class BluetoothDeviceManager {
   }
 
   /// Attempt to reconnect to the last known device
-  Future<bool> reconnectToSavedDevice() async {
+  Future<bool> _reconnectToSavedDevice() async {
     if (!_isInitialized) await initialize();
 
     if (_connectedDevice != null) {
@@ -288,9 +335,34 @@ class BluetoothDeviceManager {
     }
   }
 
+  // we wrap autoConnectToObd so only once instance of it ever runs.
+  //   this implementation is a little more complicated than a simple "isRunning" bool
+  //   guard but it allows all callers to get the same result.
+  //  It also exposes the future which we can export for testing purposes.
+  //
+  Future<bool>? _autoConnectFuture;
+
+  @visibleForTesting
+  Future<bool>? get autoConnectFuture => _autoConnectFuture;
+
   Future<bool> autoConnectToObd() async {
+    if (_autoConnectFuture != null) {
+      return _autoConnectFuture!;
+    }
+
+    // Start the connection attempt and cache the future.
+    final newFuture = _autoConnectToObd().whenComplete(() {
+      // Reset the cached future only when the attempt has completed.
+      _autoConnectFuture = null;
+    });
+    _autoConnectFuture = newFuture;
+
+    return newFuture;
+  }
+
+  Future<bool> _autoConnectToObd() async {
     // First try reconnecting to a saved device
-    if (await reconnectToSavedDevice()) {
+    if (await _reconnectToSavedDevice()) {
       return true;
     }
 
@@ -345,6 +417,41 @@ class BluetoothDeviceManager {
     }
   }
 
+  Future<Map<String, dynamic>?> collectDataFromOBD({bool disconnectAfter = true}) async {
+    if (!isConnected && !isInMockMode) {
+      try {
+        bool connected = await autoConnectToObd();
+        if (!connected) {
+          _log.warning('Failed to connect to OBD device, cannot collect data');
+          return null;
+        }
+      } catch (e) {
+        _log.warning('Error connecting to OBD device: $e');
+        return null;
+      }
+    }
+
+    try {
+      // Collect data using existing commands
+      final batteryData = await OBDCommand.lbc.run();
+      final rangeData = await OBDCommand.rangeRemaining.run();
+
+      if (batteryData.isEmpty) {
+        return null;
+      }
+
+      // Optionally disconnect
+      if (disconnectAfter) {
+        await disconnect();
+      }
+
+      return {...batteryData, ...rangeData, 'timestamp': DateTime.now().millisecondsSinceEpoch};
+    } catch (e) {
+      _log.severe('Error collecting data: $e');
+      return null;
+    }
+  }
+
   //
   // Aggressive Reconnection
   //
@@ -352,6 +459,8 @@ class BluetoothDeviceManager {
 
   // Start aggressive foreground reconnection attempts
   void startForegroundReconnection() {
+    const maxRetries = 12;
+    const retryInterval = Duration(seconds: 5);
     // Cancel any existing timer
     stopForegroundReconnection();
 
@@ -364,12 +473,17 @@ class BluetoothDeviceManager {
     autoConnectToObd();
 
     // Then set up timer for repeated attempts every 5 seconds
-    _foregroundReconnectionTimer = Timer.periodic(Duration(seconds: 5), (_) {
-      if (!isConnected) {
+    int retries = 0;
+    _foregroundReconnectionTimer = _createPeriodicTimer(retryInterval, (_) {
+      if (!isConnected || retries < maxRetries) {
         autoConnectToObd();
+        retries++;
       } else {
         // Stop if we're connected
         stopForegroundReconnection();
+        if (!isConnected) {
+          _log.warning("Couldn't connect to OBD controller after $retries attempt. Aborting...");
+        }
       }
     });
   }
@@ -534,6 +648,37 @@ enum ConnectionStatus {
   disconnecting,
   error,
   mockMode,
+}
+
+/// Track error statistics for a specific device
+class DeviceErrorStats {
+  int totalErrors = 0;
+  int totalConnections = 0;
+  int consecutiveFailures = 0;
+  int successfulConnections = 0;
+  Map<String, int> errorTypeCount = {};
+
+  void recordError(String error) {
+    totalErrors++;
+    consecutiveFailures++;
+    errorTypeCount[error] = (errorTypeCount[error] ?? 0) + 1;
+  }
+
+  void recordSuccess() {
+    totalConnections++;
+    successfulConnections++;
+    consecutiveFailures = 0;
+  }
+
+  void resetConsecutiveFailures() {
+    consecutiveFailures = 0;
+  }
+
+  bool get hasSuccessfulConnections => successfulConnections > 0;
+
+  double get successRate => totalConnections > 0 ? successfulConnections / totalConnections : 0;
+
+  bool get hasTimeoutErrors => errorTypeCount.keys.any((e) => e.toLowerCase().contains('timeout'));
 }
 
 /// A simple debug command class for testing

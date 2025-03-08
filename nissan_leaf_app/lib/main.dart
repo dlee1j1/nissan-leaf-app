@@ -52,7 +52,6 @@ class NissanLeafApp extends StatelessWidget {
       home: kIsWeb ? const WebHomePage() : const MainScreen(),
       routes: {
         '/connection': (context) => const ConnectionPage(),
-        '/connection_config': (context) => const ConnectionPage(forConfiguration: true),
         '/dashboard': (context) => const DashboardPage(),
         '/mqtt_settings': (context) => Scaffold(
               appBar: AppBar(title: const Text('MQTT Settings')),

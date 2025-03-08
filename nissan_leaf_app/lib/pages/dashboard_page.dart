@@ -1,5 +1,6 @@
 // lib/components/dashboard_page.dart (updated version)
 import 'package:flutter/material.dart';
+import 'package:nissan_leaf_app/components/log_viewer.dart';
 import 'package:nissan_leaf_app/mqtt_client.dart';
 import 'dart:async';
 import '../data/reading_model.dart';
@@ -106,23 +107,9 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   }
 
   Future<void> _refreshCurrentReading() async {
-    if (!_deviceManager.isConnected && !_deviceManager.isInMockMode) {
-      // If we're not connected, try to use the latest reading from the database
-      final latestReading = await _db.getMostRecentReading();
-      setState(() {
-        _currentReading = latestReading;
-      });
-
-      // If no reading available, show error
-      if (latestReading == null) {
-        setState(() {
-          _errorMessage = 'No OBD connection or historical data available';
-        });
-      }
-      return;
-    }
-
+    Reading? reading;
     try {
+      if (!_deviceManager.isInMockMode) await _deviceManager.autoConnectToObd();
       setState(() {
         _isLoadingCurrent = true;
         _errorMessage = null;
@@ -147,7 +134,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       final batteryCapacity = (batteryData['hv_battery_Ah'] as num?)?.toDouble() ?? 0.0;
       final estimatedRange = (rangeData['range_remaining'] as num?)?.toDouble() ?? 0.0;
 
-      final reading = Reading(
+      reading = Reading(
         timestamp: DateTime.now(),
         stateOfCharge: stateOfCharge,
         batteryHealth: batteryHealth,
@@ -165,13 +152,27 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
         _isLoadingCurrent = false;
 
         // Add to the readings list and resort
-        _readings.add(reading);
+        _readings.add(reading!);
         _readings.sort((a, b) => a.timestamp.compareTo(b.timestamp));
       });
+      return;
     } catch (e) {
       setState(() {
         _isLoadingCurrent = false;
         _errorMessage = 'Failed to refresh data: ${e.toString()}';
+      });
+    }
+
+    // If we're not connected, try to use the latest reading from the database
+    reading ??= await _db.getMostRecentReading();
+    setState(() {
+      _currentReading = reading;
+    });
+
+    // If no reading available, show error
+    if (reading == null) {
+      setState(() {
+        _errorMessage = 'No OBD connection or historical data available';
       });
     }
   }
@@ -336,6 +337,11 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                   ),
                 ),
 
+              // Log viewer
+              SizedBox(
+                height: 200,
+                child: LogViewer(),
+              ),
               const SizedBox(height: 16),
               // Battery charge chart
               ReadingsChartWidget(

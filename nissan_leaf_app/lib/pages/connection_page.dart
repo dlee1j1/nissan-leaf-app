@@ -9,11 +9,8 @@ import '../components/log_viewer.dart';
 import '../components/obd_commands_panel.dart';
 
 class ConnectionPage extends StatefulWidget {
-  final bool forConfiguration;
-
   const ConnectionPage({
     super.key,
-    this.forConfiguration = false,
   });
 
   @override
@@ -79,17 +76,6 @@ class _ConnectionPageState extends State<ConnectionPage> {
   Future<void> _initializeAndScan() async {
     await _manager.initialize();
 
-    // Try to reconnect to saved device if we're in configuration mode
-    if (widget.forConfiguration) {
-      final reconnected = await _manager.reconnectToSavedDevice();
-      if (reconnected) {
-        if (mounted) {
-          Navigator.pop(context, true); // Return to previous screen
-        }
-        return;
-      }
-    }
-
     // Start scanning
     _startScan();
   }
@@ -113,16 +99,6 @@ class _ConnectionPageState extends State<ConnectionPage> {
     }
   }
 
-  Future<void> _connectToDevice(BluetoothDevice device) async {
-    final connected = await _manager.connectToDevice(device);
-
-    if (connected && widget.forConfiguration) {
-      if (mounted) {
-        Navigator.pop(context, true); // Return to previous screen
-      }
-    }
-  }
-
   Widget _buildDeviceItem(ScanResult result) {
     return ListTile(
       title:
@@ -138,7 +114,7 @@ class _ConnectionPageState extends State<ConnectionPage> {
         ],
       ),
       isThreeLine: true,
-      onTap: _manager.isConnecting ? null : () => _connectToDevice(result.device),
+      onTap: _manager.isConnecting ? null : () => _manager.connectToDevice(result.device),
     );
   }
 
@@ -157,10 +133,6 @@ class _ConnectionPageState extends State<ConnectionPage> {
                 _manager.disableMockMode();
               } else {
                 _manager.enableMockMode();
-
-                if (widget.forConfiguration) {
-                  Navigator.pop(context, true);
-                }
               }
             },
           ),
