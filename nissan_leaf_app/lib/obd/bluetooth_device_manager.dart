@@ -63,22 +63,6 @@ class BluetoothDeviceManager {
     return _deviceErrorStats[deviceId];
   }
 
-  // For testing time-dependent behavior
-  Timer Function(Duration duration, Function() callback) _createTimer =
-      (duration, callback) => Timer(duration, callback);
-
-  Timer Function(Duration duration, Function(Timer) callback) _createPeriodicTimer =
-      (duration, callback) => Timer.periodic(duration, callback);
-
-  @visibleForTesting
-  void setTimerFactoriesForTesting({
-    Timer Function(Duration, Function())? createTimer,
-    Timer Function(Duration, Function(Timer))? createPeriodicTimer,
-  }) {
-    if (createTimer != null) _createTimer = createTimer;
-    if (createPeriodicTimer != null) _createPeriodicTimer = createPeriodicTimer;
-  }
-
   // Stream controllers for status updates
   final _connectionStatusController = StreamController<ConnectionStatus>.broadcast();
   Stream<ConnectionStatus> get connectionStatus => _connectionStatusController.stream;
@@ -179,27 +163,29 @@ class BluetoothDeviceManager {
       // Attempt to connect with retry logic
       const maxRetries = 3;
       const pauseBetweenRetry = Duration(milliseconds: 500);
-      var tries = 0;
+      var attempts = 0;
       bool connected = false;
 
-      while (!connected) {
-        String error = "";
+      while (!connected && attempts < maxRetries) {
+        attempts++;
         try {
           connected = await _bluetoothService.connectToDevice(device);
+          if (!connected) {
+            _log.info('Connection attempt $attempts failed. Device refused connection.');
+          }
         } catch (e) {
-          tries++;
-          error = '$e';
+          _log.info('Connection attempt $attempts failed. $e');
         }
 
-        if (connected) break;
-        tries++;
-        _log.info('Connection attempt $tries failed. $error');
-
-        if (tries < maxRetries) {
+        // If not connected and we still have retries left, wait before trying again
+        if (!connected && attempts < maxRetries) {
           await Future.delayed(pauseBetweenRetry);
-        } else {
-          throw Exception('Failed to connect after $maxRetries attempts');
         }
+      }
+
+      // If all retries failed, throw error
+      if (!connected) {
+        throw Exception('Failed to connect after $maxRetries attempts');
       }
 
       _connectedDevice = device;
@@ -230,7 +216,6 @@ class BluetoothDeviceManager {
       _log.info('Using characteristic ${_characteristic!.uuid}');
 
       // Create and initialize ObdController
-      // TODO: clean up obdController initialization esp w.r.t. OBDCommand
       _obdController = ObdController(_characteristic!);
       await _obdController!.initialize();
 
@@ -450,48 +435,6 @@ class BluetoothDeviceManager {
       _log.severe('Error collecting data: $e');
       return null;
     }
-  }
-
-  //
-  // Aggressive Reconnection
-  //
-  Timer? _foregroundReconnectionTimer;
-
-  // Start aggressive foreground reconnection attempts
-  void startForegroundReconnection() {
-    const maxRetries = 12;
-    const retryInterval = Duration(seconds: 5);
-    // Cancel any existing timer
-    stopForegroundReconnection();
-
-    // Only start if not already connected
-    if (isConnected) return;
-
-    _log.info('Starting foreground reconnection attempts');
-
-    // Try immediately first
-    autoConnectToObd();
-
-    // Then set up timer for repeated attempts every 5 seconds
-    int retries = 0;
-    _foregroundReconnectionTimer = _createPeriodicTimer(retryInterval, (_) {
-      if (!isConnected || retries < maxRetries) {
-        autoConnectToObd();
-        retries++;
-      } else {
-        // Stop if we're connected
-        stopForegroundReconnection();
-        if (!isConnected) {
-          _log.warning("Couldn't connect to OBD controller after $retries attempt. Aborting...");
-        }
-      }
-    });
-  }
-
-  // Stop aggressive reconnection
-  void stopForegroundReconnection() {
-    _foregroundReconnectionTimer?.cancel();
-    _foregroundReconnectionTimer = null;
   }
 
   /// Set up mock mode for testing

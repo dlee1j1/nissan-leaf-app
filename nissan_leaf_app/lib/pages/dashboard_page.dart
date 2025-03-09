@@ -57,7 +57,6 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       // TODO: refresh the page if it's been a while
     } else if (state == AppLifecycleState.paused) {
       // App goes to background - stop aggressive reconnection
-      _deviceManager.stopForegroundReconnection();
     }
   }
 
@@ -414,7 +413,6 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     _connectionStatusSubscription?.cancel();
     _orchestratorStatusSubscription?.cancel();
     WidgetsBinding.instance.removeObserver(this);
-    _deviceManager.stopForegroundReconnection();
     _db.close();
     super.dispose();
   }
