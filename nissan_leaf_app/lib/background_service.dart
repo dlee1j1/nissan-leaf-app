@@ -1,3 +1,5 @@
+// lib/background_service.dart
+// This file contains the refactored background service with orchestration logic removed
 import 'dart:async';
 import 'dart:ui';
 import 'package:flutter/material.dart';
@@ -7,21 +9,17 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:simple_logger/simple_logger.dart';
-
-import 'data/reading_model.dart';
-import 'data/readings_db.dart';
-import 'obd/obd_command.dart';
-import 'obd/bluetooth_device_manager.dart';
-
-import 'mqtt_client.dart';
 import 'mqtt_settings.dart';
+import 'mqtt_client.dart';
+
+// Import the DataOrchestrator
+import 'data_orchestrator.dart';
 
 // Key constants for shared preferences
 const String _serviceEnabledKey = 'background_service_enabled';
 const String _collectionFrequencyKey = 'collection_frequency_minutes';
 const int _defaultFrequency = 15; // 15 minutes default
 
-//TODO: test background service using mocktail
 class BackgroundService {
   static final _log = SimpleLogger();
   static final FlutterBackgroundService _service = FlutterBackgroundService();
@@ -156,61 +154,6 @@ class BackgroundService {
     return _service.on('status');
   }
 
-  // run the collection code
-  static Future<bool> collectManually() async {
-    // For web platform, use direct simulation
-    if (_isWebPlatform) {
-      try {
-        _simulateWebCollection();
-        return true;
-      } catch (e) {
-        _log.severe('Error in web collection: $e');
-        return false;
-      }
-    }
-
-    // For non-web, check if the service is running
-    if (!await isServiceRunning()) {
-      _log.warning('Background service not running - cannot collect data');
-      return false;
-    }
-
-    // Create a completer to wait for the result
-    final completer = Completer<bool>();
-
-    // Set up a subscription to catch the result
-    StreamSubscription? statusSubscription;
-    statusSubscription = getStatusStream().listen((status) {
-      if (status == null) return;
-
-      // Check if this is a collection result
-      if (status.containsKey('collecting') && status['collecting'] == false) {
-        // Collection completed
-        statusSubscription?.cancel();
-
-        // Check if there was an error
-        if (status.containsKey('error')) {
-          completer.complete(false);
-          return;
-        }
-
-        completer.complete(true);
-      }
-    });
-
-    // Trigger the collection
-    _service.invoke('manualCollect', {});
-
-    // Wait for result with timeout
-    try {
-      return await completer.future.timeout(const Duration(seconds: 10));
-    } catch (e) {
-      statusSubscription.cancel();
-      _log.warning('Timeout waiting for collection result');
-      return false;
-    }
-  }
-
   /// Set the data collection frequency in minutes
   static Future<void> setCollectionFrequency(int minutes) async {
     if (minutes < 1) {
@@ -270,67 +213,22 @@ class BackgroundService {
     _log.info('Web simulation stopped');
   }
 
+  // Simplified web simulation now using DataOrchestrator
   static void _simulateWebCollection() async {
-    // Enable mock mode in BluetoothDeviceManager
-    final manager = BluetoothDeviceManager.instance;
-    manager.enableMockMode();
+    // Use the orchestrator for collection, with a stream listener to handle status updates
+    final orchestrator = DataOrchestrator.instance;
+    final subscription = orchestrator.statusStream.listen((status) {
+      _webStatusController.add(status);
+    });
 
     try {
-      // Notify about collection start
-      _webStatusController
-          .add({'collecting': true, 'lastCollection': DateTime.now().toIso8601String()});
-
-      // Collect battery data
-      final batteryData = await manager.runCommand(OBDCommand.lbc);
-      final rangeData = await manager.runCommand(OBDCommand.rangeRemaining);
-
-      if (batteryData.isEmpty) {
-        _log.warning('Failed to retrieve mock battery data');
-        _webStatusController.add({'error': 'Failed to retrieve battery data', 'collecting': false});
-        return;
-      }
-
-      // Create a reading object from the collected data
-      final stateOfCharge = (batteryData['state_of_charge'] as num?)?.toDouble() ?? 0.0;
-      final batteryHealth = (batteryData['hv_battery_health'] as num?)?.toDouble() ?? 0.0;
-      final batteryVoltage = (batteryData['hv_battery_voltage'] as num?)?.toDouble() ?? 0.0;
-      final batteryCapacity = (batteryData['hv_battery_Ah'] as num?)?.toDouble() ?? 0.0;
-      final estimatedRange = (rangeData['range_remaining'] as num?)?.toDouble() ?? 0.0;
-
-      final reading = Reading(
-        timestamp: DateTime.now(),
-        stateOfCharge: stateOfCharge,
-        batteryHealth: batteryHealth,
-        batteryVoltage: batteryVoltage,
-        batteryCapacity: batteryCapacity,
-        estimatedRange: estimatedRange,
-      );
-
-      // Save to database (this should work in web)
-      final db = ReadingsDatabase();
-      await db.insertReading(reading);
-
-      // Generate a unique session ID
-      final prefs = await SharedPreferences.getInstance();
-      String sessionId =
-          prefs.getString('current_session_id') ?? DateTime.now().millisecondsSinceEpoch.toString();
-      prefs.setString('current_session_id', sessionId);
-
-      // Notify about collection success
-      _webStatusController.add({
-        'collecting': false,
-        'lastCollection': DateTime.now().toIso8601String(),
-        'stateOfCharge': stateOfCharge,
-        'batteryHealth': batteryHealth,
-        'estimatedRange': estimatedRange,
-        'sessionId': sessionId
-      });
-
-      _log.info(
-          'Successfully simulated data collection in web mode. SOC: $stateOfCharge%, Health: $batteryHealth%');
-    } catch (e, stackTrace) {
-      _log.severe('Error in web simulation: $e\n$stackTrace');
+      await orchestrator.collectData(useMockMode: true);
+    } catch (e) {
+      _log.severe('Error in web simulation: $e');
       _webStatusController.add({'error': e.toString(), 'collecting': false});
+    } finally {
+      // Cancel subscription to avoid memory leaks
+      subscription.cancel();
     }
   }
 }
@@ -352,17 +250,9 @@ void _onStart(ServiceInstance service) async {
   final log = SimpleLogger();
   log.info('Background service started');
 
-  // Create a database instance
-  final db = ReadingsDatabase();
-
-  // Initialize BluetoothDeviceManager
-  final deviceManager = BluetoothDeviceManager.instance;
-  await deviceManager.initialize();
-
   // Initialize with a reasonable default frequency
   int collectionFrequencyMinutes = _defaultFrequency;
   bool isMockMode = false;
-  DateTime? lastCollectionTime;
 
   // Access shared preferences to get the collection frequency
   final prefs = await SharedPreferences.getInstance();
@@ -379,78 +269,32 @@ void _onStart(ServiceInstance service) async {
   // Start periodic collection
   Timer? timer;
 
-  // Function to collect and store data
+  // Function to collect and store data using the orchestrator
   Future<void> collectData() async {
     try {
       log.info('Collecting battery data');
-      // Update the status
+
+      // Update the initial status
       service.invoke(
           'status', {'collecting': true, 'lastCollection': DateTime.now().toIso8601String()});
 
-      // Use centralized method
-      final carData = await deviceManager.collectCarData();
-
-      if (carData == null) {
-        log.warning('Failed to retrieve battery data');
-        // Update status with error
-        service.invoke('status', {'error': 'Failed to retrieve battery data'});
-        return;
-      }
-
-      final reading = Reading.fromObdMap(carData);
-
-      // Generate a unique session ID if we're starting a new session
-      // A new session is defined as being more than 30 minutes since the last collection
-      String sessionId = prefs.getString('current_session_id') ?? '';
-      if (sessionId.isEmpty ||
-          lastCollectionTime == null ||
-          DateTime.now().difference(lastCollectionTime!).inMinutes > 30) {
-        sessionId = DateTime.now().millisecondsSinceEpoch.toString();
-        prefs.setString('current_session_id', sessionId);
-        log.info('Starting new session: $sessionId');
-      }
-
-      // Save the reading to the database
-      await db.insertReading(reading);
-      lastCollectionTime = DateTime.now();
-
-// Publish to MQTT if enabled
-      final mqttClient = MqttClient.instance;
-      if (mqttClient.isConnected) {
-        try {
-          await mqttClient.publishBatteryData(
-            stateOfCharge: reading.stateOfCharge,
-            batteryHealth: reading.batteryHealth,
-            batteryVoltage: reading.batteryVoltage,
-            batteryCapacity: reading.batteryCapacity,
-            estimatedRange: reading.estimatedRange,
-            sessionId: sessionId,
-          );
-          log.info('Published data to MQTT');
-        } catch (e) {
-          log.warning('Error publishing to MQTT: $e');
-        }
-      }
-      // Update status with successful collection
-      service.invoke('status', {
-        'collecting': false,
-        'lastCollection': lastCollectionTime!.toIso8601String(),
-        'stateOfCharge': reading.stateOfCharge,
-        'batteryHealth': reading.batteryHealth,
-        'estimatedRange': reading.estimatedRange,
-        'sessionId': sessionId
+      // Set up a listener for status updates from the orchestrator
+      final orchestrator = DataOrchestrator.instance;
+      final subscription = orchestrator.statusStream.listen((status) {
+        // Forward status updates to the service
+        service.invoke('status', status);
       });
 
-      log.info(
-          'Successfully collected and stored battery data. SOC: ${reading.stateOfCharge}%, Health: ${reading.batteryHealth}%');
+      try {
+        // Use the orchestrator to collect data
+        await orchestrator.collectData(useMockMode: isMockMode);
+      } finally {
+        // Ensure subscription is cancelled
+        subscription.cancel();
+      }
     } catch (e, stackTrace) {
       log.severe('Error collecting data: $e\n$stackTrace');
       service.invoke('status', {'error': e.toString(), 'collecting': false});
-    } finally {
-      // Disconnect to save battery if we're not using mock mode
-      if (deviceManager.isConnected && !isMockMode) {
-        await deviceManager.disconnect();
-      }
     }
   }
 
@@ -468,16 +312,6 @@ void _onStart(ServiceInstance service) async {
   service.on('stopService').listen((event) {
     log.info('Stopping background service');
     timer?.cancel();
-
-    // Disconnect if connected
-    if (deviceManager.isConnected) {
-      deviceManager.disconnect();
-    }
-
-    // Clean up MQTT resources
-    final mqttClient = MqttClient.instance;
-    mqttClient.dispose();
-
     service.stopSelf();
   });
 
@@ -504,21 +338,11 @@ void _onStart(ServiceInstance service) async {
     if (event != null && event['enabled'] != null) {
       isMockMode = event['enabled'];
       log.info('Mock mode set to: $isMockMode');
-
-      if (isMockMode) {
-        // Enable mock mode
-        if (deviceManager.isConnected) {
-          deviceManager.disconnect();
-        }
-        deviceManager.enableMockMode(
-          mockResponse: event['mockData'],
-          mockRangeResponse: event['mockRangeData'],
-        );
-      } else {
-        // Disable mock mode
-        deviceManager.disableMockMode();
-      }
     }
+  });
+
+  service.on('manualCollect').listen((event) async {
+    await collectData();
   });
 
   // Start the collection timer

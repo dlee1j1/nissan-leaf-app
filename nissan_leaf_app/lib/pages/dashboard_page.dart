@@ -1,6 +1,5 @@
 // lib/components/dashboard_page.dart (updated version)
 import 'package:flutter/material.dart';
-import 'package:nissan_leaf_app/background_service.dart';
 import 'package:nissan_leaf_app/components/log_viewer.dart';
 import 'package:nissan_leaf_app/mqtt_client.dart';
 import 'dart:async';
@@ -10,6 +9,7 @@ import '../obd/bluetooth_device_manager.dart';
 import '../components/battery_status_widget.dart';
 import '../components/service_control_widget.dart';
 import '../components/readings_chart_widget.dart';
+import '../data_orchestrator.dart';
 
 class DashboardPage extends StatefulWidget {
   const DashboardPage({super.key});
@@ -21,6 +21,7 @@ class DashboardPage extends StatefulWidget {
 class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserver {
   final ReadingsDatabase _db = ReadingsDatabase();
   final BluetoothDeviceManager _deviceManager = BluetoothDeviceManager.instance;
+  final DataOrchestrator _orchestrator = DataOrchestrator.instance;
 
   List<Reading> _readings = [];
   Reading? _currentReading;
@@ -36,14 +37,17 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   StreamSubscription? _mqttStatusSubscription;
   bool _isMqttConnected = false;
 
+  // Add this for orchestrator status
+  StreamSubscription? _orchestratorStatusSubscription;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _setupConnectionListener();
     _setupMqttListener();
+    _setupOrchestratorListener();
     _initializeData();
-    // TODO: refresh the page if it's been a while
   }
 
   @override
@@ -77,8 +81,46 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     _isMqttConnected = mqttClient.isConnected;
   }
 
+  void _setupOrchestratorListener() {
+    _orchestratorStatusSubscription = _orchestrator.statusStream.listen((status) {
+      // Update UI when collection status changes
+      if (status.containsKey('collecting') && status['collecting'] == false) {
+        // Collection finished, refresh our data
+        if (!status.containsKey('error')) {
+          // Collection was successful
+          _loadHistoricalData();
+          _updateCurrentReadingFromStatus(status);
+        } else {
+          // There was an error
+          setState(() {
+            _isLoadingCurrent = false;
+            _errorMessage = status['error'];
+          });
+        }
+      }
+    });
+  }
+
+  void _updateCurrentReadingFromStatus(Map<String, dynamic> status) {
+    // Try to get latest reading from db first
+    _db.getMostRecentReading().then((latestReading) {
+      setState(() {
+        _currentReading = latestReading;
+        _isLoadingCurrent = false;
+
+        // If we got a new reading, add it to the list
+        if (latestReading != null &&
+            (_readings.isEmpty || latestReading.timestamp.isAfter(_readings.last.timestamp))) {
+          _readings.add(latestReading);
+          _readings.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+        }
+      });
+    });
+  }
+
   Future<void> _initializeData() async {
     await _loadHistoricalData();
+    // TODO: make this more aggressive
     await _refreshCurrentReading();
   }
 
@@ -113,41 +155,31 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
         _errorMessage = null;
       });
 
-      // Perform manual collection
-      bool success = await BackgroundService.collectManually();
-      final latestReading = await _db.getMostRecentReading();
+      // Perform data collection using orchestrator directly
+      bool success = await _orchestrator.collectData();
 
-      if (success) {
-        // Collection succeeded, reading is the latest from the database
+      if (!success) {
         setState(() {
-          _currentReading = latestReading;
           _isLoadingCurrent = false;
-
-          // Add to the readings list and resort
-          _readings.add(latestReading!);
-          _readings.sort((a, b) => a.timestamp.compareTo(b.timestamp));
-        });
-        return;
-      }
-
-      // If we get here, either collection failed or no reading was found
-      setState(() {
-        _isLoadingCurrent = false;
-        _errorMessage = 'Failed to retrieve battery data';
-      });
-
-      // Try to use the existing reading if available
-      if (_currentReading == null) {
-        setState(() {
-          _currentReading = latestReading;
+          _errorMessage = 'Failed to retrieve battery data';
         });
 
-        if (latestReading == null) {
+        // Try to use the existing reading if available
+        if (_currentReading == null) {
+          final latestReading = await _db.getMostRecentReading();
           setState(() {
-            _errorMessage = 'No OBD connection or historical data available';
+            _currentReading = latestReading;
           });
+
+          if (latestReading == null) {
+            setState(() {
+              _errorMessage = 'No OBD connection or historical data available';
+            });
+          }
         }
       }
+
+      // Note: The rest of the updates will happen via the orchestrator status listener
     } catch (e) {
       setState(() {
         _isLoadingCurrent = false;
@@ -380,6 +412,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   void dispose() {
     _mqttStatusSubscription?.cancel();
     _connectionStatusSubscription?.cancel();
+    _orchestratorStatusSubscription?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     _deviceManager.stopForegroundReconnection();
     _db.close();
