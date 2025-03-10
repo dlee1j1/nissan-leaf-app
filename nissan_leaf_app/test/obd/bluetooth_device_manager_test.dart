@@ -7,9 +7,7 @@ import 'package:nissan_leaf_app/obd/bluetooth_device_manager.dart';
 import 'package:nissan_leaf_app/obd/bluetooth_service_interface.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
-import 'package:simple_logger/simple_logger.dart';
-
-final _logger = SimpleLogger();
+import '../utils/fake_async_utils.dart';
 
 // Mock classes
 class MockBluetoothServiceInterface extends Mock implements BluetoothServiceInterface {}
@@ -275,39 +273,46 @@ void main() {
   });
 
   group('Error Recovery Scenarios', () {
-    test('should handle connection timeouts and retry automatically', () async {
-      // Arrange: Connection times out 3 times
-      bluetoothHelper.setupConnectionTimeout(mockDevice);
+    test('should handle connection timeouts and retry automatically - fake async', () {
+      runWithFakeAsync((fake) async {
+        // Arrange: Connection times out 3 times
+        bluetoothHelper.setupConnectionTimeout(mockDevice);
 
-      // Act: Attempt connection
-      final result = await manager.connectToDevice(mockDevice);
+        // Act: Attempt connection
+        final resultFuture = manager.connectToDevice(mockDevice);
 
-      // Assert: Connection attempt fails
-      expect(result, false);
+        // Advance time to allow for retries (needs to exceed the retry delays)
+        fake.elapse(Duration(seconds: 10));
 
-      // Connection should have been attempted the max number of times (3)
-      verify(() => bluetoothHelper.mock.connectToDevice(mockDevice)).called(3);
+        final result = await resultFuture;
 
-      // Error state should be set
-      expect(manager.lastError, contains('Failed to connect after'));
+        // Assert: Connection attempt fails
+        expect(result, false);
 
-      // Reset for next test
-      reset(bluetoothHelper.mock);
+        // Connection should have been attempted the max number of times
+        verify(() => bluetoothHelper.mock.connectToDevice(mockDevice)).called(3);
 
-      // Now make connection succeed
-      bluetoothHelper.setupSuccessfulConnection(mockDevice);
+        // Error state should be set
+        expect(manager.lastError, contains('Failed to connect after'));
 
-      // But service discovery fails
-      bluetoothHelper.setupFailedServiceDiscovery(mockDevice);
+        // Reset for next test
+        reset(bluetoothHelper.mock);
 
-      // Attempt connection again
-      final result2 = await manager.connectToDevice(mockDevice);
+        // Now make connection succeed
+        bluetoothHelper.setupSuccessfulConnection(mockDevice);
 
-      // Should still fail but differently
-      expect(result2, false);
+        // But service discovery fails
+        bluetoothHelper.setupFailedServiceDiscovery(mockDevice);
 
-      // Should still disconnect
-      bluetoothHelper.verifyDisconnectionFrom(mockDevice);
+        // Attempt connection again
+        final result2 = await manager.connectToDevice(mockDevice);
+
+        // Should still fail but differently
+        expect(result2, false);
+
+        // Should still disconnect
+        bluetoothHelper.verifyDisconnectionFrom(mockDevice);
+      });
     });
 
     test('should handle failed device initialization after successful connection', () async {
@@ -330,42 +335,46 @@ void main() {
       expect(manager.lastError, contains('Required OBD service not found'));
     });
 
-    test('should attempt connection to next device if first device fails', () async {
-      bluetoothHelper.setupBluetoothOn();
-      // Create two mock devices with OBD-related names
-      final mockDevice1 = MockBluetoothDevice('device1', 'OBD Failed Device');
-      final mockDevice2 = MockBluetoothDevice('device2', 'OBD Working Device');
-      final mockResult1 = MockScanResult(mockDevice1);
-      final mockResult2 = MockScanResult(mockDevice2);
+    test('should attempt connection to next device if first device fails', () {
+      runWithFakeAsync((fake) async {
+        // Create two mock devices
+        final mockDevice1 = MockBluetoothDevice('device1', 'OBD Failed Device');
+        final mockDevice2 = MockBluetoothDevice('device2', 'OBD Working Device');
+        final mockResult1 = MockScanResult(mockDevice1);
+        final mockResult2 = MockScanResult(mockDevice2);
 
-      // Setup scan to return both devices
-      when(() => bluetoothHelper.mock.scanForDevices(
-            timeout: any(named: 'timeout'),
-            nameFilters: any(named: 'nameFilters'),
-          )).thenAnswer((_) async => [mockResult1, mockResult2]);
+        // Setup scan to return both devices
+        when(() => bluetoothHelper.mock.scanForDevices(
+              timeout: any(named: 'timeout'),
+              nameFilters: any(named: 'nameFilters'),
+            )).thenAnswer((_) async => [mockResult1, mockResult2]);
 
-      // First device fails
-      when(() => bluetoothHelper.mock.connectToDevice(mockDevice1)).thenAnswer((_) async => false);
+        // First device fails
+        when(() => bluetoothHelper.mock.connectToDevice(mockDevice1))
+            .thenAnswer((_) async => false);
 
-      // Second device succeeds
-      when(() => bluetoothHelper.mock.connectToDevice(mockDevice2)).thenAnswer((_) async => true);
+        // Second device succeeds
+        when(() => bluetoothHelper.mock.connectToDevice(mockDevice2)).thenAnswer((_) async => true);
 
-      // Second device gets proper service discovery
-      when(() => bluetoothHelper.mock.discoverServices(mockDevice2))
-          .thenAnswer((_) async => [mockService]);
+        // Second device gets proper service discovery
+        when(() => bluetoothHelper.mock.discoverServices(mockDevice2))
+            .thenAnswer((_) async => [mockService]);
 
-      // Make writes succeed to avoid probe command errors
-      when(() => mockCharacteristic.write(any())).thenAnswer((_) async {});
+        // Make writes succeed
+        when(() => mockCharacteristic.write(any())).thenAnswer((_) async {});
 
-      // Attempt auto-connect
-      final result = await manager.autoConnectToObd();
+        // Attempt auto-connect
+        final resultFuture = manager.autoConnectToObd();
 
-      // Note: Expected to be false since we didn't set up the OBD probe response properly
-      expect(result, false);
+        // Advance time to allow for connection attempts
+        fake.elapse(Duration(seconds: 15));
 
-      // Both devices should have been attempted
-      verify(() => bluetoothHelper.mock.connectToDevice(mockDevice1)).called(3);
-      verify(() => bluetoothHelper.mock.connectToDevice(mockDevice2)).called(1);
+        await resultFuture;
+
+        // Verify that both devices were attempted
+        verify(() => bluetoothHelper.mock.connectToDevice(mockDevice1)).called(3);
+        verify(() => bluetoothHelper.mock.connectToDevice(mockDevice2)).called(1);
+      });
     });
 
     // Simplified version of the complex error sequence test

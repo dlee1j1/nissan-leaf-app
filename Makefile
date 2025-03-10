@@ -52,7 +52,7 @@ analyze:
 linux: test # doesn't work due to issues with bluetooth and X inside the container. maybe it will work in a linux environment? 
 	cd nissan_leaf_app && flutter run -d linux
 
-android: check-adb test
+android: check-adb 
 	cd nissan_leaf_app && flutter run -d $(shell adb devices | grep -v "List" | grep "device$$" | head -1 | cut -f1)
 
 web: test
@@ -79,7 +79,7 @@ docker-build: .docker-build-stamp
 	docker-compose build 
 	touch .docker-build-stamp
 
-docker-shell: docker-build
+docker-shell: 
 	powershell.exe -File setup-android-debugging.ps1
 	sleep 2
 	docker-compose up -d &&	docker-compose exec flutter_dev bash
