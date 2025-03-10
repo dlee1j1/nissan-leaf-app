@@ -1,9 +1,7 @@
 // lib/background_service.dart
-// This file contains the refactored background service with orchestration logic removed
 import 'dart:async';
 import 'dart:ui';
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -11,8 +9,6 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:simple_logger/simple_logger.dart';
 import 'mqtt_settings.dart';
 import 'mqtt_client.dart';
-
-// Import the DataOrchestrator
 import 'data_orchestrator.dart';
 
 // Key constants for shared preferences
@@ -24,24 +20,12 @@ class BackgroundService {
   static final _log = SimpleLogger();
   static final FlutterBackgroundService _service = FlutterBackgroundService();
   static bool _isInitialized = false;
-
-  // Web simulation variables
-  static bool _webSimulationRunning = false;
-  static Timer? _webSimulationTimer;
-  static final _webStatusController = StreamController<Map<String, dynamic>>.broadcast();
-
-  // Check if running on web
-  static bool get _isWebPlatform => kIsWeb;
+  static final _orchestrator = DirectOBDOrchestrator();
+  static get orchestrator => _orchestrator;
 
   /// Initialize the background service
   static Future<void> initialize() async {
     if (_isInitialized) return;
-
-    if (_isWebPlatform) {
-      _log.info('Web platform detected - using simulated background service');
-      _isInitialized = true;
-      return;
-    }
 
     // Request necessary permissions
     await _requestPermissions();
@@ -95,8 +79,6 @@ class BackgroundService {
 
   /// Request necessary permissions for the background service
   static Future<void> _requestPermissions() async {
-    if (_isWebPlatform) return; // No permissions needed for web
-
     await Permission.notification.request();
 
     // Bluetooth permissions
@@ -116,11 +98,7 @@ class BackgroundService {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_serviceEnabledKey, true);
 
-    if (_isWebPlatform) {
-      _startWebSimulation();
-      return true;
-    }
-
+    _log.info('Starting background service');
     return await _service.startService();
   }
 
@@ -130,27 +108,17 @@ class BackgroundService {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_serviceEnabledKey, false);
 
-    if (_isWebPlatform) {
-      _stopWebSimulation();
-    }
-
     _log.info('Stopping background service');
     _service.invoke('stopService');
   }
 
   /// Check if the service is running
   static Future<bool> isServiceRunning() async {
-    if (_isWebPlatform) {
-      return _webSimulationRunning;
-    }
     return await _service.isRunning();
   }
 
   /// Get the service stream for status updates
   static Stream<Map<String, dynamic>?> getStatusStream() {
-    if (_isWebPlatform) {
-      return _webStatusController.stream;
-    }
     return _service.on('status');
   }
 
@@ -162,13 +130,6 @@ class BackgroundService {
 
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt(_collectionFrequencyKey, minutes);
-
-    if (_isWebPlatform) {
-      if (_webSimulationRunning) {
-        _startWebSimulation(); // Restart with new frequency
-      }
-      return;
-    }
 
     // Update the running service if it's active
     if (await isServiceRunning()) {
@@ -186,50 +147,6 @@ class BackgroundService {
   static Future<bool> isServiceEnabled() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getBool(_serviceEnabledKey) ?? false;
-  }
-
-  // Web simulation methods
-  static void _startWebSimulation() async {
-    _webSimulationTimer?.cancel();
-    _webSimulationRunning = true;
-
-    int minutes = await getCollectionFrequency();
-    // Use a faster interval for web demo, but still show correct minutes in UI
-    final collectionInterval = _isWebPlatform ? Duration(seconds: 15) : Duration(minutes: minutes);
-    _log.info('Web simulation starting with interval: ${collectionInterval.inSeconds} seconds');
-
-    _webSimulationTimer = Timer.periodic(collectionInterval, (_) {
-      _simulateWebCollection();
-    });
-
-    // Run immediately
-    _simulateWebCollection();
-  }
-
-  static void _stopWebSimulation() {
-    _webSimulationTimer?.cancel();
-    _webSimulationTimer = null;
-    _webSimulationRunning = false;
-    _log.info('Web simulation stopped');
-  }
-
-  // Simplified web simulation now using DataOrchestrator
-  static void _simulateWebCollection() async {
-    // Use the orchestrator for collection, with a stream listener to handle status updates
-    final orchestrator = DataOrchestrator.instance;
-    final subscription = orchestrator.statusStream.listen((status) {
-      _webStatusController.add(status);
-    });
-
-    try {
-      await orchestrator.collectData(useMockMode: true);
-    } catch (e) {
-      _log.severe('Error in web simulation: $e');
-      _webStatusController.add({'error': e.toString(), 'collecting': false});
-    } finally {
-      // Cancel subscription to avoid memory leaks
-      subscription.cancel();
-    }
   }
 }
 
@@ -252,7 +169,6 @@ void _onStart(ServiceInstance service) async {
 
   // Initialize with a reasonable default frequency
   int collectionFrequencyMinutes = _defaultFrequency;
-  bool isMockMode = false;
 
   // Access shared preferences to get the collection frequency
   final prefs = await SharedPreferences.getInstance();
@@ -266,6 +182,15 @@ void _onStart(ServiceInstance service) async {
     );
   }
 
+  // Create orchestrator for data collection
+  final orchestrator = BackgroundService.orchestrator;
+
+  // Set up status forwarder
+  orchestrator.statusStream.listen((status) {
+    // Forward status updates to the service clients
+    service.invoke('status', status);
+  });
+
   // Start periodic collection
   Timer? timer;
 
@@ -274,24 +199,8 @@ void _onStart(ServiceInstance service) async {
     try {
       log.info('Collecting battery data');
 
-      // Update the initial status
-      service.invoke(
-          'status', {'collecting': true, 'lastCollection': DateTime.now().toIso8601String()});
-
-      // Set up a listener for status updates from the orchestrator
-      final orchestrator = DataOrchestrator.instance;
-      final subscription = orchestrator.statusStream.listen((status) {
-        // Forward status updates to the service
-        service.invoke('status', status);
-      });
-
-      try {
-        // Use the orchestrator to collect data
-        await orchestrator.collectData(useMockMode: isMockMode);
-      } finally {
-        // Ensure subscription is cancelled
-        subscription.cancel();
-      }
+      // Let the orchestrator handle the collection process
+      await orchestrator.collectData();
     } catch (e, stackTrace) {
       log.severe('Error collecting data: $e\n$stackTrace');
       service.invoke('status', {'error': e.toString(), 'collecting': false});
@@ -312,6 +221,7 @@ void _onStart(ServiceInstance service) async {
   service.on('stopService').listen((event) {
     log.info('Stopping background service');
     timer?.cancel();
+    orchestrator.dispose();
     service.stopSelf();
   });
 
@@ -331,13 +241,6 @@ void _onStart(ServiceInstance service) async {
           content: 'Running in background, collecting every $collectionFrequencyMinutes minutes',
         );
       }
-    }
-  });
-
-  service.on('setMockMode').listen((event) {
-    if (event != null && event['enabled'] != null) {
-      isMockMode = event['enabled'];
-      log.info('Mock mode set to: $isMockMode');
     }
   });
 

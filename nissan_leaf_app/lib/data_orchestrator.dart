@@ -1,111 +1,147 @@
 // lib/data_orchestrator.dart
 import 'dart:async';
-import 'package:flutter/foundation.dart';
-import 'package:nissan_leaf_app/async_safety.dart';
+import 'package:flutter_background_service/flutter_background_service.dart';
+import 'package:intl/intl.dart';
 import 'package:simple_logger/simple_logger.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'async_safety.dart';
 import 'data/reading_model.dart';
 import 'data/readings_db.dart';
 import 'obd/bluetooth_device_manager.dart';
-import 'obd/obd_command.dart';
 import 'mqtt_client.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'mock_battery_states.dart';
 
-/// Orchestrates the data collection, storage, and publishing workflow
-///
-/// This class is responsible for coordinating:
-/// - Data collection from the vehicle
-/// - Storage of readings in the database
-/// - Managing sessions
-/// - Publishing to MQTT
-class DataOrchestrator {
-  // Singleton pattern
-  static final DataOrchestrator _instance = DataOrchestrator._internal();
-  static DataOrchestrator get instance => _instance;
+/// Abstract interface for data orchestration
+abstract class DataOrchestrator {
+  Stream<Map<String, dynamic>> get statusStream;
+  Future<bool> collectData();
+  void dispose();
+}
 
-  // Dependencies - initialized with default implementations
-  BluetoothDeviceManager _deviceManager = BluetoothDeviceManager.instance;
-  MqttClient _mqttClient = MqttClient.instance;
-  ReadingsDatabase Function() _databaseFactory = () => ReadingsDatabase();
-
-  // Getters for dependencies
-  BluetoothDeviceManager get deviceManager => _deviceManager;
-  MqttClient get mqttClient => _mqttClient;
-
-  // Testing setters for dependencies
-  @visibleForTesting
-  void setDependencies({
-    BluetoothDeviceManager? deviceManager,
-    MqttClient? mqttClient,
-    ReadingsDatabase Function()? databaseFactory,
-  }) {
-    if (deviceManager != null) _deviceManager = deviceManager;
-    if (mqttClient != null) _mqttClient = mqttClient;
-    if (databaseFactory != null) _databaseFactory = databaseFactory;
-  }
-
-  // Reset to default dependencies (useful for cleaning up after tests)
-  @visibleForTesting
-  void resetDependencies() {
-    _deviceManager = BluetoothDeviceManager.instance;
-    _mqttClient = MqttClient.instance;
-    _databaseFactory = () => ReadingsDatabase();
-  }
-
-  final _log = SimpleLogger();
+/// Orchestrator that uses background service (Real Mode)
+class BackgroundServiceOrchestrator implements DataOrchestrator {
   final _statusController = StreamController<Map<String, dynamic>>.broadcast();
+  StreamSubscription? _serviceSubscription;
+  final _log = SimpleLogger();
+  final FlutterBackgroundService _flutterBackgroundService;
 
-  /// Stream of collection status updates
+  BackgroundServiceOrchestrator({FlutterBackgroundService? flutterBackgroundService})
+      : _flutterBackgroundService = flutterBackgroundService ?? FlutterBackgroundService() {
+    _serviceSubscription = _flutterBackgroundService.on('status').listen((status) {
+      if (status != null) {
+        _statusController.add(status);
+      }
+    });
+    _log.info('Created BackgroundServiceOrchestrator');
+  }
+
+  @override
   Stream<Map<String, dynamic>> get statusStream => _statusController.stream;
 
-  // Private constructor
-  DataOrchestrator._internal();
+  @override
+  Future<bool> collectData() async {
+    _log.info('Requesting data collection from background service');
 
-  /// Collects data from the vehicle, stores it, and publishes to MQTT
-  ///
-  /// Returns true if collection was successful
-  final SingleFlight<bool> _collectDataGuard = SingleFlight<bool>();
+    // Request collection from background service
+    _flutterBackgroundService.invoke('manualCollect');
 
-  Future<bool> collectData({bool useMockMode = false}) async {
-    return _collectDataGuard.run(() => _collectData(useMockMode: useMockMode));
+    // Wait for completion
+    final completer = Completer<bool>();
+    StreamSubscription? subscription;
+
+    subscription = statusStream.listen((status) {
+      if (status['collecting'] == false) {
+        final success = !status.containsKey('error');
+        completer.complete(success);
+        subscription?.cancel();
+      }
+    });
+
+    return completer.future.timeout(Duration(seconds: 30), onTimeout: () {
+      _log.warning('Timeout waiting for background service response');
+      subscription?.cancel();
+      return false;
+    });
   }
 
-  Future<bool> _collectData({bool useMockMode = false}) async {
-    // Set up device manager
-    if (useMockMode) {
-      _deviceManager.enableMockMode();
-    }
+  @override
+  void dispose() {
+    _serviceSubscription?.cancel();
+    _statusController.close();
+  }
+}
 
+/// Orchestrator that connects directly to OBD (Debug Mode)
+class DirectOBDOrchestrator implements DataOrchestrator {
+  // TODO: move MQTT initialization here
+  final _statusController = StreamController<Map<String, dynamic>>.broadcast();
+  final BluetoothDeviceManager _deviceManager;
+  final ReadingsDatabase _db;
+  final MqttClient _mqttClient;
+  final _log = SimpleLogger();
+  var _initialized = false;
+
+  Future<void> _initialize() async {
+    if (_initialized) return;
+    await _deviceManager.initialize();
+    _initialized = true;
+  }
+
+  DirectOBDOrchestrator({
+    BluetoothDeviceManager? deviceManager,
+    ReadingsDatabase? db,
+    MqttClient? mqttClient,
+  })  : _deviceManager = deviceManager ?? BluetoothDeviceManager.instance,
+        _db = db ?? ReadingsDatabase(),
+        _mqttClient = mqttClient ?? MqttClient.instance {
+    _log.info('Created DirectOBDOrchestrator for debug mode');
+  }
+
+  @override
+  Stream<Map<String, dynamic>> get statusStream => _statusController.stream;
+
+  @override
+  Future<bool> collectData() async {
     try {
-      // Notify about collection start
-      _updateStatus({'collecting': true, 'lastCollection': DateTime.now().toIso8601String()});
+      _initialize();
+      _statusController.add({'collecting': true});
+      _log.info('Starting direct OBD data collection');
 
-      // Collect battery data
-      final batteryData = await _deviceManager.runCommand(OBDCommand.lbc);
-      final rangeData = await _deviceManager.runCommand(OBDCommand.rangeRemaining);
+      // Connect if needed
+      if (!_deviceManager.isConnected) {
+        _statusController.add({'status': 'Connecting to OBD device...'});
+        _log.info('Connecting to OBD device...');
+        bool connected = await _deviceManager.autoConnectToObd();
+        if (!connected) {
+          _log.warning('Failed to connect to OBD device');
+          _statusController.add({'collecting': false, 'error': 'Failed to connect to OBD device'});
+          return false;
+        }
+      }
 
-      if (batteryData.isEmpty) {
-        _log.warning('Failed to retrieve battery data');
-        _updateStatus({'error': 'Failed to retrieve battery data', 'collecting': false});
+      // Collect data
+      _statusController.add({'status': 'Collecting data...'});
+      _log.info('Connected, collecting car data');
+      final data = await _deviceManager.collectCarData();
+
+      if (data == null) {
+        _log.warning('No data collected from OBD');
+        _statusController.add({'collecting': false, 'error': 'No data collected'});
         return false;
       }
 
-      // Create a reading object from the collected data
-      final reading = Reading.fromObdMap({
-        ...batteryData,
-        ...rangeData,
-        'timeStamp': DateTime.now(),
-      });
-
-      // Save to database
-      final db = _databaseFactory();
-      await db.insertReading(reading);
+      // Create reading and store/publish
+      final reading = Reading.fromObdMap(data);
+      await _db.insertReading(reading);
+      _log.info('Saved reading to database');
 
       // Generate a unique session ID
       final sessionId = await _getOrCreateSessionId();
 
-      // Publish to MQTT if connected
-      if (_mqttClient.isConnected) {
-        try {
+      try {
+        // Publish to MQTT if connected
+        if (_mqttClient.isConnected) {
+          _log.info('Publishing to MQTT');
           await _mqttClient.publishBatteryData(
             stateOfCharge: reading.stateOfCharge,
             batteryHealth: reading.batteryHealth,
@@ -114,17 +150,14 @@ class DataOrchestrator {
             estimatedRange: reading.estimatedRange,
             sessionId: sessionId,
           );
-          _log.info('Published data to MQTT');
-        } catch (e) {
-          _log.warning('Error publishing to MQTT: $e');
-          // Continue even if MQTT fails
         }
+      } catch (e) {
+        // swallow any exceptions, it's not critical
+        _log.warning('MQTT publish failed: $e');
       }
 
-      // Notify about collection success
-      _updateStatus({
+      _statusController.add({
         'collecting': false,
-        'lastCollection': DateTime.now().toIso8601String(),
         'stateOfCharge': reading.stateOfCharge,
         'batteryHealth': reading.batteryHealth,
         'estimatedRange': reading.estimatedRange,
@@ -135,22 +168,13 @@ class DataOrchestrator {
           'Successfully collected and stored battery data. SOC: ${reading.stateOfCharge}%, Health: ${reading.batteryHealth}%');
       return true;
     } catch (e, stackTrace) {
-      _log.severe('Error in data collection: $e\n$stackTrace');
-      _updateStatus({'error': e.toString(), 'collecting': false});
+      _log.severe('Error in direct OBD data collection: $e\n$stackTrace');
+      _statusController.add({'collecting': false, 'error': e.toString()});
       return false;
-    } finally {
-      // Disconnect to save battery if we're not using mock mode
-      if (_deviceManager.isConnected && !useMockMode) {
-        await _deviceManager.disconnect();
-      }
     }
   }
 
   /// Gets or creates a session ID
-  ///
-  /// A new session is started if:
-  /// - No current session exists
-  /// - It has been more than 30 minutes since the last collection
   Future<String> _getOrCreateSessionId() async {
     final prefs = await SharedPreferences.getInstance();
     String sessionId = prefs.getString('current_session_id') ?? '';
@@ -171,7 +195,7 @@ class DataOrchestrator {
     }
 
     if (createNewSession) {
-      sessionId = DateTime.now().millisecondsSinceEpoch.toString();
+      sessionId = DateFormat('yyyy.MM.dd.HH.mm').format(DateTime.now().toUtc());
       prefs.setString('current_session_id', sessionId);
       _log.info('Starting new session: $sessionId');
     }
@@ -181,15 +205,87 @@ class DataOrchestrator {
     return sessionId;
   }
 
-  /// Update status and notify listeners
-  void _updateStatus(Map<String, dynamic> status) {
-    if (!_statusController.isClosed) {
-      _statusController.add(status);
+  @override
+  void dispose() {
+    _statusController.close();
+  }
+}
+
+/// Orchestrator that generates mock data (Mock Mode & Web)
+class MockDataOrchestrator implements DataOrchestrator {
+  final _statusController = StreamController<Map<String, dynamic>>.broadcast();
+  final _log = SimpleLogger();
+
+  MockDataOrchestrator() {
+    _log.info('Created MockDataOrchestrator');
+  }
+
+  @override
+  Stream<Map<String, dynamic>> get statusStream => _statusController.stream;
+
+  @override
+  Future<bool> collectData() async {
+    _statusController.add({'collecting': true});
+    _log.info('Generating mock battery data');
+
+    // Generate mock reading
+    final reading = MockBatteryStates.generateReading();
+
+    _statusController.add({
+      'collecting': false,
+      'stateOfCharge': reading.stateOfCharge,
+      'batteryHealth': reading.batteryHealth,
+      'estimatedRange': reading.estimatedRange,
+      'lastCollection': DateTime.now().toIso8601String(),
+    });
+
+    return true;
+  }
+
+  @override
+  void dispose() {
+    _statusController.close();
+  }
+}
+
+/// Singleton for backward compatibility
+/// This provides compatibility for existing code that uses DataOrchestrator.instance
+class DataOrchestratorLegacy implements DataOrchestrator {
+  // Singleton pattern
+  static final DataOrchestratorLegacy _instance = DataOrchestratorLegacy._internal();
+  static DataOrchestratorLegacy get instance => _instance;
+
+  // Current orchestrator
+  late DataOrchestrator _delegate;
+  final SingleFlight<bool> _collectDataGuard = SingleFlight<bool>();
+  final _log = SimpleLogger();
+
+  // Private constructor
+  DataOrchestratorLegacy._internal() {
+    _delegate = DirectOBDOrchestrator();
+    _log.info('Created DataOrchestratorLegacy singleton');
+  }
+
+  // Set the active orchestrator implementation
+  void setOrchestrator(DataOrchestrator orchestrator) {
+    if (_delegate != orchestrator) {
+      _log.info('Switching orchestrator implementation');
+      _delegate.dispose();
+      _delegate = orchestrator;
     }
   }
 
-  /// Clean up resources
+  // Implementation via delegation
+  @override
+  Stream<Map<String, dynamic>> get statusStream => _delegate.statusStream;
+
+  @override
+  Future<bool> collectData({bool useMockMode = false}) {
+    return _collectDataGuard.run(() => _delegate.collectData());
+  }
+
+  @override
   void dispose() {
-    _statusController.close();
+    _delegate.dispose();
   }
 }

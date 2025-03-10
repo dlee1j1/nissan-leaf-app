@@ -65,9 +65,6 @@ class _ConnectionPageState extends State<ConnectionPage> {
           case ConnectionStatus.error:
             _connectionStatus = 'Error';
             break;
-          case ConnectionStatus.mockMode:
-            _connectionStatus = 'Using mock data';
-            break;
         }
       });
     });
@@ -123,20 +120,7 @@ class _ConnectionPageState extends State<ConnectionPage> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('OBD Device Connection'),
-        actions: [
-          // Mock mode button
-          IconButton(
-            icon: const Icon(Icons.computer),
-            tooltip: 'Enable Mock Mode',
-            onPressed: () {
-              if (_manager.isInMockMode) {
-                _manager.disableMockMode();
-              } else {
-                _manager.enableMockMode();
-              }
-            },
-          ),
-        ],
+        actions: [],
       ),
       body: Column(
         children: [
@@ -169,7 +153,7 @@ class _ConnectionPageState extends State<ConnectionPage> {
           ),
 
           // Device list or command panel
-          if (_manager.isConnected || _manager.isInMockMode)
+          if (_manager.isConnected)
             Expanded(
               child: ObdCommandsPanel(),
             )

@@ -1,6 +1,4 @@
 // test/data_orchestrator_test.dart
-import 'dart:async';
-
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:nissan_leaf_app/data_orchestrator.dart';
@@ -21,7 +19,7 @@ class MockMqttClient extends Mock implements MqttClient {}
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  late DataOrchestrator orchestrator;
+  late DirectOBDOrchestrator orchestrator;
   late MockBluetoothDeviceManager mockDeviceManager;
   late MockReadingsDatabase mockDatabase;
   late MockMqttClient mockMqttClient;
@@ -36,14 +34,11 @@ void main() {
     // Reset shared preferences
     SharedPreferences.setMockInitialValues({});
 
-    // Get the orchestrator instance
-    orchestrator = DataOrchestrator.instance;
-
     // Set dependencies with mocks
-    orchestrator.setDependencies(
+    orchestrator = DirectOBDOrchestrator(
       deviceManager: mockDeviceManager,
       mqttClient: mockMqttClient,
-      databaseFactory: () => mockDatabase,
+      db: mockDatabase,
     );
 
     // Register fallback values for matchers
@@ -56,12 +51,7 @@ void main() {
       batteryCapacity: 0,
       estimatedRange: 0,
     ));
-  });
-
-  // Clean up after each test
-  tearDown(() {
-    // Reset dependencies to original implementations
-    orchestrator.resetDependencies();
+    registerFallbackValue(false); // For disconnectAfter parameter
   });
 
   group('DataOrchestrator', () {
@@ -74,50 +64,46 @@ void main() {
 
       try {
         // Set up mock responses
-        final batteryData = {
+        final carData = {
           'state_of_charge': 85,
           'hv_battery_health': 90,
           'hv_battery_voltage': 360,
           'hv_battery_Ah': 56,
-        };
-
-        final rangeData = {
           'range_remaining': 150,
+          'timestamp': DateTime.now().millisecondsSinceEpoch,
         };
 
-        // Set up mock behavior
-        when(() => mockDeviceManager.runCommand(OBDCommand.lbc))
-            .thenAnswer((_) async => batteryData);
-        when(() => mockDeviceManager.runCommand(OBDCommand.rangeRemaining))
-            .thenAnswer((_) async => rangeData);
+        // Mock device manager behavior - critical fix
+        when(() => mockDeviceManager.initialize()).thenAnswer((_) async {});
         when(() => mockDeviceManager.isConnected).thenReturn(false);
-        when(() => mockDeviceManager.enableMockMode()).thenReturn(null);
+        when(() => mockDeviceManager.autoConnectToObd()).thenAnswer((_) async => true);
+        when(() => mockDeviceManager.collectCarData(disconnectAfter: any(named: 'disconnectAfter')))
+            .thenAnswer((_) async => carData);
+
+        // Mock database behavior
         when(() => mockDatabase.insertReading(any())).thenAnswer((_) async => 1);
+
+        // Mock MQTT connection state
         when(() => mockMqttClient.isConnected).thenReturn(false);
 
-        // Call collectData with mock mode
-        await orchestrator.collectData(useMockMode: true);
+        // Call the method under test
+        await orchestrator.collectData();
 
-        // Give time for stream events to be processed
-        await Future.delayed(const Duration(milliseconds: 100));
+        // Allow time for event processing
+        await Future.delayed(const Duration(milliseconds: 50));
 
         // Verify statusStream emitted events
-        expect(statusUpdates.length, greaterThan(1));
-
-        // First event should be "collecting: true"
+        expect(statusUpdates, isNotEmpty);
         expect(statusUpdates.first['collecting'], isTrue);
-
-        // Last event should be "collecting: false" with data
         expect(statusUpdates.last['collecting'], isFalse);
         expect(statusUpdates.last['stateOfCharge'], 85);
 
         // Verify mock interactions
-        verify(() => mockDeviceManager.enableMockMode()).called(1);
-        verify(() => mockDeviceManager.runCommand(OBDCommand.lbc)).called(1);
-        verify(() => mockDeviceManager.runCommand(OBDCommand.rangeRemaining)).called(1);
+        verify(() =>
+                mockDeviceManager.collectCarData(disconnectAfter: any(named: 'disconnectAfter')))
+            .called(1);
         verify(() => mockDatabase.insertReading(any())).called(1);
       } finally {
-        // Clean up
         subscription.cancel();
       }
     });
@@ -129,17 +115,21 @@ void main() {
       await prefs.setString('current_session_id', 'old_session');
       await prefs.setString('last_collection_time', oldTime.toIso8601String());
 
-      // Set up mock behavior
-      when(() => mockDeviceManager.runCommand(OBDCommand.lbc)).thenAnswer((_) async => {
-            'state_of_charge': 85,
-            'hv_battery_health': 90,
-            'hv_battery_voltage': 360,
-            'hv_battery_Ah': 56,
-          });
-      when(() => mockDeviceManager.runCommand(OBDCommand.rangeRemaining))
-          .thenAnswer((_) async => {'range_remaining': 150});
+      // Set up mock behavior - critical fix
+      final carData = {
+        'state_of_charge': 85,
+        'hv_battery_health': 90,
+        'hv_battery_voltage': 360,
+        'hv_battery_Ah': 56,
+        'range_remaining': 150,
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      };
+
+      when(() => mockDeviceManager.initialize()).thenAnswer((_) async {});
       when(() => mockDeviceManager.isConnected).thenReturn(false);
-      when(() => mockDeviceManager.enableMockMode()).thenReturn(null);
+      when(() => mockDeviceManager.autoConnectToObd()).thenAnswer((_) async => true);
+      when(() => mockDeviceManager.collectCarData(disconnectAfter: any(named: 'disconnectAfter')))
+          .thenAnswer((_) async => carData);
       when(() => mockDatabase.insertReading(any())).thenAnswer((_) async => 1);
       when(() => mockMqttClient.isConnected).thenReturn(false);
 
@@ -153,10 +143,10 @@ void main() {
 
       try {
         // Call collectData
-        await orchestrator.collectData(useMockMode: true);
+        await orchestrator.collectData();
 
-        // Give time for stream events
-        await Future.delayed(const Duration(milliseconds: 100));
+        // Allow time for events to be processed
+        await Future.delayed(const Duration(milliseconds: 50));
 
         // Verify a new session was created (not 'old_session')
         expect(capturedSessionId, isNotNull);
@@ -177,17 +167,21 @@ void main() {
       await prefs.setString('current_session_id', 'recent_session');
       await prefs.setString('last_collection_time', recentTime.toIso8601String());
 
-      // Set up mock behavior
-      when(() => mockDeviceManager.runCommand(OBDCommand.lbc)).thenAnswer((_) async => {
-            'state_of_charge': 85,
-            'hv_battery_health': 90,
-            'hv_battery_voltage': 360,
-            'hv_battery_Ah': 56,
-          });
-      when(() => mockDeviceManager.runCommand(OBDCommand.rangeRemaining))
-          .thenAnswer((_) async => {'range_remaining': 150});
+      // Set up mock behavior - critical fix
+      final carData = {
+        'state_of_charge': 85,
+        'hv_battery_health': 90,
+        'hv_battery_voltage': 360,
+        'hv_battery_Ah': 56,
+        'range_remaining': 150,
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      };
+
+      when(() => mockDeviceManager.initialize()).thenAnswer((_) async {});
       when(() => mockDeviceManager.isConnected).thenReturn(false);
-      when(() => mockDeviceManager.enableMockMode()).thenReturn(null);
+      when(() => mockDeviceManager.autoConnectToObd()).thenAnswer((_) async => true);
+      when(() => mockDeviceManager.collectCarData(disconnectAfter: any(named: 'disconnectAfter')))
+          .thenAnswer((_) async => carData);
       when(() => mockDatabase.insertReading(any())).thenAnswer((_) async => 1);
       when(() => mockMqttClient.isConnected).thenReturn(false);
 
@@ -201,10 +195,10 @@ void main() {
 
       try {
         // Call collectData
-        await orchestrator.collectData(useMockMode: true);
+        await orchestrator.collectData();
 
-        // Give time for stream events
-        await Future.delayed(const Duration(milliseconds: 100));
+        // Allow time for events
+        await Future.delayed(const Duration(milliseconds: 50));
 
         // Verify session was reused
         expect(capturedSessionId, 'recent_session');
@@ -215,37 +209,32 @@ void main() {
 
     test('collectData returns false when battery data is empty', () async {
       // Mock empty response
-      when(() => mockDeviceManager.runCommand(OBDCommand.lbc)).thenAnswer((_) async => {});
-      when(() => mockDeviceManager.runCommand(OBDCommand.rangeRemaining))
-          .thenAnswer((_) async => {});
+      when(() => mockDeviceManager.initialize()).thenAnswer((_) async {});
       when(() => mockDeviceManager.isConnected).thenReturn(false);
-      when(() => mockDeviceManager.enableMockMode()).thenReturn(null);
+      when(() => mockDeviceManager.autoConnectToObd()).thenAnswer((_) async => true);
+      when(() => mockDeviceManager.collectCarData(disconnectAfter: any(named: 'disconnectAfter')))
+          .thenAnswer((_) async => null); // Return null to simulate failure
 
       // Create a completer that will complete when error is received
-      final errorCompleter = Completer<String>();
-
-      // Listen for the error
+      String? errorMessage;
       final subscription = orchestrator.statusStream.listen((status) {
         if (status['error'] != null) {
-          errorCompleter.complete(status['error']);
+          errorMessage = status['error'];
         }
       });
 
       try {
         // Call collectData
-        final result = await orchestrator.collectData(useMockMode: true);
+        final result = await orchestrator.collectData();
+
+        // Allow time for events
+        await Future.delayed(const Duration(milliseconds: 50));
 
         // Verify result
         expect(result, isFalse);
 
-        // Wait for the error to be emitted
-        final error = await errorCompleter.future.timeout(
-          const Duration(seconds: 1),
-          onTimeout: () => throw TimeoutException('Error status not received'),
-        );
-
         // Verify error was reported
-        expect(error, contains('Failed to retrieve battery data'));
+        expect(errorMessage, contains('No data collected'));
       } finally {
         subscription.cancel();
       }
@@ -253,16 +242,20 @@ void main() {
 
     test('collectData publishes to MQTT when connected', () async {
       // Mock response data
-      when(() => mockDeviceManager.runCommand(OBDCommand.lbc)).thenAnswer((_) async => {
-            'state_of_charge': 85,
-            'hv_battery_health': 90,
-            'hv_battery_voltage': 360,
-            'hv_battery_Ah': 56,
-          });
-      when(() => mockDeviceManager.runCommand(OBDCommand.rangeRemaining))
-          .thenAnswer((_) async => {'range_remaining': 150});
+      final carData = {
+        'state_of_charge': 85,
+        'hv_battery_health': 90,
+        'hv_battery_voltage': 360,
+        'hv_battery_Ah': 56,
+        'range_remaining': 150,
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      };
+
+      when(() => mockDeviceManager.initialize()).thenAnswer((_) async {});
       when(() => mockDeviceManager.isConnected).thenReturn(false);
-      when(() => mockDeviceManager.enableMockMode()).thenReturn(null);
+      when(() => mockDeviceManager.autoConnectToObd()).thenAnswer((_) async => true);
+      when(() => mockDeviceManager.collectCarData(disconnectAfter: any(named: 'disconnectAfter')))
+          .thenAnswer((_) async => carData);
       when(() => mockDatabase.insertReading(any())).thenAnswer((_) async => 1);
 
       // Mock MQTT client is connected
@@ -277,7 +270,7 @@ void main() {
           )).thenAnswer((_) async => true);
 
       // Call collectData
-      final result = await orchestrator.collectData(useMockMode: true);
+      final result = await orchestrator.collectData();
 
       // Verify result
       expect(result, isTrue);
@@ -295,16 +288,20 @@ void main() {
 
     test('MQTT publishing errors are caught and do not stop collection', () async {
       // Mock response data
-      when(() => mockDeviceManager.runCommand(OBDCommand.lbc)).thenAnswer((_) async => {
-            'state_of_charge': 85,
-            'hv_battery_health': 90,
-            'hv_battery_voltage': 360,
-            'hv_battery_Ah': 56,
-          });
-      when(() => mockDeviceManager.runCommand(OBDCommand.rangeRemaining))
-          .thenAnswer((_) async => {'range_remaining': 150});
+      final carData = {
+        'state_of_charge': 85,
+        'hv_battery_health': 90,
+        'hv_battery_voltage': 360,
+        'hv_battery_Ah': 56,
+        'range_remaining': 150,
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      };
+
+      when(() => mockDeviceManager.initialize()).thenAnswer((_) async {});
       when(() => mockDeviceManager.isConnected).thenReturn(false);
-      when(() => mockDeviceManager.enableMockMode()).thenReturn(null);
+      when(() => mockDeviceManager.autoConnectToObd()).thenAnswer((_) async => true);
+      when(() => mockDeviceManager.collectCarData(disconnectAfter: any(named: 'disconnectAfter')))
+          .thenAnswer((_) async => carData);
       when(() => mockDatabase.insertReading(any())).thenAnswer((_) async => 1);
 
       // Mock MQTT client is connected but publishing throws an error
@@ -319,7 +316,7 @@ void main() {
           )).thenThrow(Exception('MQTT publish error'));
 
       // Call collectData - this should not throw
-      final result = await orchestrator.collectData(useMockMode: true);
+      final result = await orchestrator.collectData();
 
       // Collection should still succeed despite MQTT error
       expect(result, isTrue);

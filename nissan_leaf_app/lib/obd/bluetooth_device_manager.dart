@@ -1,4 +1,4 @@
-// lib/obd/bluetooth_device_manager.dart - modified version
+// lib/obd/bluetooth_device_manager.dart
 import 'dart:async';
 import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart';
@@ -10,7 +10,6 @@ import 'package:permission_handler/permission_handler.dart';
 import 'bluetooth_service_interface.dart';
 import '../obd/obd_controller.dart';
 import '../obd/obd_command.dart';
-import '../obd/mock_obd_controller.dart';
 
 // Constants for Bluetooth connectivity
 // ignore: constant_identifier_names
@@ -40,7 +39,6 @@ class BluetoothDeviceManager {
   ObdController? _obdController;
   bool _isConnecting = false;
   bool _isInitialized = false;
-  bool _isInMockMode = false;
 
   // Error tracking
   String? _lastErrorMessage;
@@ -67,16 +65,11 @@ class BluetoothDeviceManager {
   final _connectionStatusController = StreamController<ConnectionStatus>.broadcast();
   Stream<ConnectionStatus> get connectionStatus => _connectionStatusController.stream;
 
-  // For testing and debug mode
-  String? _mockResponseData;
-  String? _mockRangeResponseData;
-
   // Getters
   BluetoothDevice? get connectedDevice => _connectedDevice;
   ObdController? get obdController => _obdController;
-  bool get isConnected => _connectedDevice != null && _obdController != null && !_isInMockMode;
+  bool get isConnected => _connectedDevice != null && _obdController != null;
   bool get isConnecting => _isConnecting;
-  bool get isInMockMode => _isInMockMode;
 
   /// Initialize the device manager
   Future<void> initialize() async {
@@ -228,7 +221,6 @@ class BluetoothDeviceManager {
       // Save device info for future reconnection
       await _saveDeviceInfo(device);
 
-      _isInMockMode = false;
       _updateStatus(ConnectionStatus.ready, 'Device ready');
       _log.info('Successfully connected to OBD device: ${device.platformName}');
 
@@ -403,7 +395,7 @@ class BluetoothDeviceManager {
   }
 
   Future<Map<String, dynamic>?> collectCarData({bool disconnectAfter = true}) async {
-    if (!isConnected && !isInMockMode) {
+    if (!isConnected) {
       try {
         bool connected = await autoConnectToObd();
         if (!connected) {
@@ -437,52 +429,9 @@ class BluetoothDeviceManager {
     }
   }
 
-  /// Set up mock mode for testing
-  void enableMockMode({
-    String? mockResponse,
-    String? mockRangeResponse,
-  }) {
-    _log.info('Enabling mock mode');
-
-    // Default responses if none provided
-    _mockResponseData = mockResponse ??
-        '''
-      7BB10356101FFFFF060
-      7BB210289FFFFE763FF
-      7BB22FFCA4A09584650
-      7BB239608383E038700
-      7BB24017000239A000C
-      7BB25814C00191FB580
-      7BB260005FFFFE763FF
-      7BB27FFE56501AEFFFF''';
-
-    _mockRangeResponseData = mockRangeResponse ?? '7BB 03 62 0E 24 05 DC';
-
-    // Create mock controller
-    final mockController = MockObdController(_mockResponseData!);
-    mockController.mockRangeResponse = _mockRangeResponseData;
-
-    // Set up controller
-    _obdController = mockController;
-    OBDCommand.setObdController(_obdController!);
-
-    _isInMockMode = true;
-    _updateStatus(ConnectionStatus.mockMode, 'Using mock data');
-  }
-
-  /// Disable mock mode
-  void disableMockMode() {
-    if (!_isInMockMode) return;
-
-    _log.info('Disabling mock mode');
-    _obdController = null;
-    _isInMockMode = false;
-    _updateStatus(ConnectionStatus.disconnected);
-  }
-
   /// Send a debug OBD command and return the response
   Future<Map<String, dynamic>> sendDebugCommand(String command, String header) async {
-    if (!isConnected && !_isInMockMode) {
+    if (!isConnected) {
       _log.warning('No connection available for debug command');
       return {'error': 'No connection available'};
     }
@@ -509,7 +458,7 @@ class BluetoothDeviceManager {
 
   /// Run a specific OBD command
   Future<Map<String, dynamic>> runCommand(OBDCommand command) async {
-    if (!isConnected && !_isInMockMode) {
+    if (!isConnected) {
       _log.warning('No connection available for command: ${command.name}');
       return {};
     }
@@ -528,7 +477,7 @@ class BluetoothDeviceManager {
 
   /// Run all available commands
   Future<Map<String, Map<String, dynamic>>> runAllCommands() async {
-    if (!isConnected && !_isInMockMode) {
+    if (!isConnected) {
       _log.warning('No connection available for running all commands');
       return {};
     }
@@ -590,7 +539,6 @@ enum ConnectionStatus {
   ready,
   disconnecting,
   error,
-  mockMode,
 }
 
 /// Track error statistics for a specific device

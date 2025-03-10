@@ -247,29 +247,6 @@ void main() {
       // Assert
       bluetoothHelper.verifyConnectionAttemptedFor(mockDevice);
     });
-
-    test('enableMockMode sets up mock controller', () async {
-      // Act
-      manager.enableMockMode();
-
-      // Assert
-      expect(manager.isInMockMode, true);
-      expect(manager.isConnected, false);
-      expect(manager.obdController, isNotNull);
-    });
-
-    test('disableMockMode exits mock mode', () async {
-      // Arrange
-      manager.enableMockMode();
-      expect(manager.isInMockMode, true);
-
-      // Act
-      manager.disableMockMode();
-
-      // Assert
-      expect(manager.isInMockMode, false);
-      expect(manager.obdController, isNull);
-    });
   });
 
   group('Error Recovery Scenarios', () {

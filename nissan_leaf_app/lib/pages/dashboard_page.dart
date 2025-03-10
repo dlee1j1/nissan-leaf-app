@@ -1,7 +1,11 @@
-// lib/components/dashboard_page.dart (updated version)
+// lib/pages/dashboard_page.dart
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:nissan_leaf_app/components/log_viewer.dart';
 import 'package:nissan_leaf_app/mqtt_client.dart';
+import 'package:simple_logger/simple_logger.dart';
 import 'dart:async';
 import '../data/reading_model.dart';
 import '../data/readings_db.dart';
@@ -10,6 +14,48 @@ import '../components/battery_status_widget.dart';
 import '../components/service_control_widget.dart';
 import '../components/readings_chart_widget.dart';
 import '../data_orchestrator.dart';
+import '../background_service.dart';
+import '../components/mock_battery_selector_widget.dart';
+
+/// Data orchestration modes
+enum AppMode { real, mock, debug }
+
+class DataOrchestratorFactory {
+  // Cache of orchestrators
+  static final Map<AppMode, DataOrchestrator> _cache = {};
+
+  static DataOrchestrator create(AppMode mode) {
+    // Return cached orchestrator if available
+    if (_cache.containsKey(mode)) {
+      return _cache[mode]!;
+    }
+
+    // Create new orchestrator if needed
+    DataOrchestrator orchestrator;
+    switch (mode) {
+      case AppMode.real:
+        orchestrator = BackgroundServiceOrchestrator();
+        break;
+      case AppMode.debug:
+        orchestrator = DirectOBDOrchestrator();
+        break;
+      case AppMode.mock:
+        orchestrator = MockDataOrchestrator();
+        break;
+    }
+
+    _cache[mode] = orchestrator;
+    return orchestrator;
+  }
+
+  // Call this when app is shutting down
+  static void disposeAll() {
+    for (var orchestrator in _cache.values) {
+      orchestrator.dispose();
+    }
+    _cache.clear();
+  }
+}
 
 class DashboardPage extends StatefulWidget {
   const DashboardPage({super.key});
@@ -21,7 +67,11 @@ class DashboardPage extends StatefulWidget {
 class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserver {
   final ReadingsDatabase _db = ReadingsDatabase();
   final BluetoothDeviceManager _deviceManager = BluetoothDeviceManager.instance;
-  final DataOrchestrator _orchestrator = DataOrchestrator.instance;
+  final _logger = SimpleLogger();
+
+  // Orchestration mode
+  AppMode _currentMode = AppMode.real;
+  late DataOrchestrator _orchestrator;
 
   List<Reading> _readings = [];
   Reading? _currentReading;
@@ -37,26 +87,108 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   StreamSubscription? _mqttStatusSubscription;
   bool _isMqttConnected = false;
 
-  // Add this for orchestrator status
+  // Orchestrator status
   StreamSubscription? _orchestratorStatusSubscription;
+
+  bool isBackgroundServiceSupported() {
+    try {
+      // Check for Android or iOS
+      if (Platform.isAndroid || Platform.isIOS) {
+        return true; // Background services are supported
+      }
+      // Add checks for other platforms as needed
+      return false;
+    } catch (e) {
+      // If `Platform` is not available (e.g., on desktop), assume not supported
+      return false;
+    }
+  }
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+
+    // Set initial mode based on platform
+    if (!isBackgroundServiceSupported()) {
+      _currentMode = AppMode.mock;
+    }
+
+    _setupOrchestrator();
     _setupConnectionListener();
     _setupMqttListener();
-    _setupOrchestratorListener();
     _initializeData();
+    _setupBackgroundService();
+  }
+
+  void _setupBackgroundService() {
+    // Configure background service based on mode
+    try {
+      if (_currentMode == AppMode.real) {
+        BackgroundService.startService();
+      } else if (_currentMode == AppMode.debug) {
+        // Stop background service to avoid conflicts with direct OBD access
+        BackgroundService.stopService();
+      }
+    } on UnsupportedError catch (_) {
+      // swallow the error if it's because BackgroundService
+      _logger.info("Background Service unsupported on this platform");
+    }
+  }
+
+  void _setupOrchestrator() {
+    // Dispose of existing orchestrator if any
+    _orchestratorStatusSubscription?.cancel();
+
+    // Create the appropriate orchestrator
+    _orchestrator = DataOrchestratorFactory.create(_currentMode);
+
+    // Listen to status updates
+    _orchestratorStatusSubscription = _orchestrator.statusStream.listen((status) {
+      setState(() {
+        // Update collecting status
+        if (status.containsKey('collecting')) {
+          _isCollecting = status['collecting'] == true;
+        }
+
+        // Handle error state
+        if (status.containsKey('error')) {
+          _errorMessage = status['error'];
+          _isLoadingCurrent = false;
+        }
+
+        // Handle successful collection
+        if (status.containsKey('collecting') &&
+            status['collecting'] == false &&
+            !status.containsKey('error')) {
+          _loadHistoricalData();
+          _updateCurrentReadingFromStatus(status);
+        }
+      });
+    });
+  }
+
+  void _setMode(AppMode mode) {
+    if (_currentMode == mode) return;
+
+    setState(() {
+      _currentMode = mode;
+      _setupOrchestrator();
+      _setupBackgroundService();
+
+      // Clear any error messages when switching modes
+      _errorMessage = null;
+    });
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      // App comes to foreground - start aggressive reconnection
-      // TODO: refresh the page if it's been a while
-    } else if (state == AppLifecycleState.paused) {
-      // App goes to background - stop aggressive reconnection
+      // App comes to foreground - refresh if needed
+      if (_currentReading == null ||
+          DateTime.now().difference(_currentReading!.timestamp).inMinutes > 10) {
+        _refreshCurrentReading();
+      }
     }
   }
 
@@ -80,26 +212,6 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     _isMqttConnected = mqttClient.isConnected;
   }
 
-  void _setupOrchestratorListener() {
-    _orchestratorStatusSubscription = _orchestrator.statusStream.listen((status) {
-      // Update UI when collection status changes
-      if (status.containsKey('collecting') && status['collecting'] == false) {
-        // Collection finished, refresh our data
-        if (!status.containsKey('error')) {
-          // Collection was successful
-          _loadHistoricalData();
-          _updateCurrentReadingFromStatus(status);
-        } else {
-          // There was an error
-          setState(() {
-            _isLoadingCurrent = false;
-            _errorMessage = status['error'];
-          });
-        }
-      }
-    });
-  }
-
   void _updateCurrentReadingFromStatus(Map<String, dynamic> status) {
     // Try to get latest reading from db first
     _db.getMostRecentReading().then((latestReading) {
@@ -119,7 +231,6 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
 
   Future<void> _initializeData() async {
     await _loadHistoricalData();
-    // TODO: make this more aggressive
     await _refreshCurrentReading();
   }
 
@@ -147,44 +258,51 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     }
   }
 
+  bool _isCollecting = false;
+
   Future<void> _refreshCurrentReading() async {
+    if (_isCollecting) {
+      return; // Already collecting data
+    }
+
     try {
       setState(() {
         _isLoadingCurrent = true;
         _errorMessage = null;
       });
 
-      // Perform data collection using orchestrator directly
-      bool success = await _orchestrator.collectData();
+      // Use the current orchestrator for collection
+      await _orchestrator.collectData();
 
-      if (!success) {
-        setState(() {
-          _isLoadingCurrent = false;
-          _errorMessage = 'Failed to retrieve battery data';
-        });
-
-        // Try to use the existing reading if available
-        if (_currentReading == null) {
-          final latestReading = await _db.getMostRecentReading();
-          setState(() {
-            _currentReading = latestReading;
-          });
-
-          if (latestReading == null) {
-            setState(() {
-              _errorMessage = 'No OBD connection or historical data available';
-            });
-          }
-        }
-      }
-
-      // Note: The rest of the updates will happen via the orchestrator status listener
+      // Status updates will be handled by the orchestrator status listener
     } catch (e) {
       setState(() {
         _isLoadingCurrent = false;
         _errorMessage = 'Failed to refresh data: ${e.toString()}';
       });
     }
+  }
+
+  // Error message card builder
+  Widget _buildErrorMessage(String message) {
+    return Card(
+      color: Colors.red[100],
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Row(
+          children: [
+            const Icon(Icons.error, color: Colors.red),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Text(
+                message,
+                style: const TextStyle(color: Colors.red),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
@@ -200,13 +318,13 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
               child: Row(
                 children: [
                   Icon(
-                    _deviceManager.isConnected || _deviceManager.isInMockMode
+                    _deviceManager.isConnected
                         ? Icons.bluetooth_connected
                         : Icons.bluetooth_disabled,
                     size: 16,
                     color: _deviceManager.isConnected
                         ? Colors.green
-                        : _deviceManager.isInMockMode
+                        : _currentMode == AppMode.mock
                             ? Colors.orange
                             : Colors.red,
                   ),
@@ -217,7 +335,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                       fontSize: 12,
                       color: _deviceManager.isConnected
                           ? Colors.green
-                          : _deviceManager.isInMockMode
+                          : _currentMode == AppMode.mock
                               ? Colors.orange
                               : Colors.red,
                     ),
@@ -226,6 +344,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
               ),
             ),
           ),
+
           // Connect button
           IconButton(
             icon: const Icon(Icons.bluetooth),
@@ -240,7 +359,51 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
               }
             },
           ),
-          // Add this PopupMenuButton for settings
+
+          // Mode toggle menu (not shown on web)
+          if (!kIsWeb)
+            PopupMenuButton<AppMode>(
+              icon: const Icon(Icons.mode_edit_outline),
+              tooltip: 'Change mode',
+              onSelected: _setMode,
+              itemBuilder: (context) => [
+                PopupMenuItem(
+                  value: AppMode.real,
+                  child: ListTile(
+                    leading: const Icon(Icons.play_arrow),
+                    title: const Text('Real Mode'),
+                    subtitle: const Text('Background service'),
+                    trailing: _currentMode == AppMode.real
+                        ? const Icon(Icons.check, color: Colors.green)
+                        : null,
+                  ),
+                ),
+                PopupMenuItem(
+                  value: AppMode.mock,
+                  child: ListTile(
+                    leading: const Icon(Icons.content_copy),
+                    title: const Text('Mock Mode'),
+                    subtitle: const Text('Simulated data'),
+                    trailing: _currentMode == AppMode.mock
+                        ? const Icon(Icons.check, color: Colors.green)
+                        : null,
+                  ),
+                ),
+                PopupMenuItem(
+                  value: AppMode.debug,
+                  child: ListTile(
+                    leading: const Icon(Icons.bug_report),
+                    title: const Text('Debug Mode'),
+                    subtitle: const Text('Direct OBD access'),
+                    trailing: _currentMode == AppMode.debug
+                        ? const Icon(Icons.check, color: Colors.green)
+                        : null,
+                  ),
+                ),
+              ],
+            ),
+
+          // Settings menu
           PopupMenuButton<String>(
             icon: const Icon(Icons.settings),
             onSelected: (value) {
@@ -280,26 +443,33 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Error message if any
-              if (_errorMessage != null)
-                Card(
-                  color: Colors.red[100],
-                  child: Padding(
-                    padding: const EdgeInsets.all(16.0),
-                    child: Row(
-                      children: [
-                        const Icon(Icons.error, color: Colors.red),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          child: Text(
-                            _errorMessage!,
-                            style: const TextStyle(color: Colors.red),
-                          ),
-                        ),
-                      ],
+              // App mode indicator
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8.0),
+                child: Row(
+                  children: [
+                    Text(
+                      'Current Mode: ',
+                      style: Theme.of(context).textTheme.bodyLarge,
                     ),
-                  ),
+                    Chip(
+                      label: Text(_currentMode.toString().split('.').last,
+                          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                      backgroundColor: _currentMode == AppMode.real
+                          ? Colors.green
+                          : _currentMode == AppMode.mock
+                              ? Colors.orange
+                              : Colors.blue,
+                    ),
+                  ],
                 ),
+              ),
+
+              // Error message if any
+              if (_errorMessage != null) _buildErrorMessage(_errorMessage!),
+
+              // Mock selector in mock mode or on web
+              if (_currentMode == AppMode.mock) const MockBatterySelector(),
 
               // Current battery status
               BatteryStatusWidget(
@@ -313,9 +483,45 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
 
               const SizedBox(height: 16),
 
-              // Background service control
-              const ServiceControlWidget(),
+              // Background service control (only in real mode)
+              // TODO: write test that this widget doesn't show in kWeb mode
+              if (_currentMode == AppMode.real) const ServiceControlWidget(),
 
+              // Debug mode notice
+              if (_currentMode == AppMode.debug)
+                Card(
+                  color: Colors.blue[50],
+                  child: Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Row(
+                      children: [
+                        Icon(Icons.bug_report, color: Colors.blue),
+                        SizedBox(width: 8),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Debug Mode Active',
+                                style: TextStyle(fontWeight: FontWeight.bold),
+                              ),
+                              Text(
+                                'Using direct OBD connection. Background service is disabled.',
+                                style: TextStyle(fontSize: 12),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+
+              // Log viewer
+              SizedBox(
+                height: 200,
+                child: LogViewer(),
+              ),
               const SizedBox(height: 16),
 
               // MQTT status
@@ -347,12 +553,8 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                   ),
                 ),
 
-              // Log viewer
-              SizedBox(
-                height: 200,
-                child: LogViewer(),
-              ),
               const SizedBox(height: 16),
+
               // Battery charge chart
               ReadingsChartWidget(
                 readings: _readings,
@@ -372,7 +574,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
               ),
 
               // Connection status or instructions
-              if (!_deviceManager.isConnected && !_deviceManager.isInMockMode)
+              if (!_deviceManager.isConnected && _currentMode != AppMode.mock)
                 Card(
                   child: Padding(
                     padding: const EdgeInsets.all(16.0),
@@ -412,6 +614,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     _mqttStatusSubscription?.cancel();
     _connectionStatusSubscription?.cancel();
     _orchestratorStatusSubscription?.cancel();
+    _orchestrator.dispose();
     WidgetsBinding.instance.removeObserver(this);
     _db.close();
     super.dispose();

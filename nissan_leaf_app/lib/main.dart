@@ -5,7 +5,6 @@ import 'package:nissan_leaf_app/components/mqtt_settings_widget.dart';
 import 'package:simple_logger/simple_logger.dart';
 import 'dart:async';
 
-import 'pages/web_home_page.dart';
 import 'pages/connection_page.dart';
 import 'pages/dashboard_page.dart';
 import 'components/log_viewer.dart';
@@ -49,7 +48,7 @@ class NissanLeafApp extends StatelessWidget {
         visualDensity: VisualDensity.adaptivePlatformDensity,
       ),
       themeMode: ThemeMode.system,
-      home: kIsWeb ? const WebHomePage() : const MainScreen(),
+      home: const MainScreen(),
       routes: {
         '/connection': (context) => const ConnectionPage(),
         '/dashboard': (context) => const DashboardPage(),
@@ -71,7 +70,6 @@ class MainScreen extends StatefulWidget {
 }
 
 class _MainScreenState extends State<MainScreen> {
-  final _deviceManager = BluetoothDeviceManager.instance;
   bool _isInitializing = true;
 
   @override
@@ -81,19 +79,10 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   Future<void> _initializeApp() async {
-    // Initialize the device manager
-    await _deviceManager.initialize();
-
-    // Initialize the background service
-    await BackgroundService.initialize();
-
     // Check if service was enabled previously
-    if (await BackgroundService.isServiceEnabled()) {
+    if (!kIsWeb && await BackgroundService.isServiceEnabled()) {
       await BackgroundService.startService();
     }
-
-    // Try to reconnect to the last device
-    await _deviceManager.autoConnectToObd();
 
     setState(() {
       _isInitializing = false;
