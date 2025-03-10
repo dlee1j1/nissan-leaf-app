@@ -7,9 +7,12 @@ OBD_INCLUDE := nissan_leaf_app/lib/obd/*.dart,nissan_leaf_app/test/obd/*.dart
 # Helper function to expand include patterns to file list
 # Usage: $(call get_source_files,include_pattern)
 
+# Define a literal comma and space
+comma := ,
+space := $(empty) $(empty)
 
 define get_source_files
-$(shell cd .. && find $(shell echo "$(1)" | tr ',' ' ') -type f 2>/dev/null | sed 's/^/..\//')
+$(shell find $(addprefix ../, $(subst $(comma),$(space),$(1))) -type f 2>/dev/null)
 endef
 
 # Default target
