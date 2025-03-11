@@ -42,8 +42,8 @@ force-test:
 check-adb:
 	@echo "Checking ADB status..."
 	@which adb > /dev/null || (echo "Error: ADB not found in PATH" && exit 1)
-	@sudo adb start-server > /dev/null || (echo "Error: ADB did not start. Likely need to restart the docker container: docker-compose down && make docker-shell " && exit 1)
-	@sudo adb devices | grep -q "device$$" || (echo "Error: No devices connected or authorized. Check ADB devices list:" && adb devices && exit 1)
+	@adb start-server > /dev/null || (echo "Error: ADB did not start. Likely need to restart the docker container: docker-compose down && make docker-shell " && exit 1)
+	@adb devices | grep -q "device$$" || (echo "Error: No devices connected or authorized. Check ADB devices list:" && adb devices && exit 1)
 	@echo "ADB is running and devices are available."
 
 analyze:
@@ -53,7 +53,7 @@ linux: test # doesn't work due to issues with bluetooth and X inside the contain
 	cd nissan_leaf_app && flutter run -d linux
 
 android: check-adb 
-	cd nissan_leaf_app && flutter run -d $(shell sudo adb devices | grep -v "List" | grep "device$$" | head -1 | cut -f1)
+	cd nissan_leaf_app && flutter run -d $(shell adb devices | grep -v "List" | grep "device$$" | head -1 | cut -f1)
 
 web: test
 	cd nissan_leaf_app && flutter run -d web-server --web-hostname=0.0.0.0 --web-port=8080
