@@ -8,8 +8,6 @@ ENV ANDROID_SDK_ROOT=/opt/android-sdk-linux
 ENV FLUTTER_HOME=/opt/flutter
 ENV PATH=$PATH:$FLUTTER_HOME/bin:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools
 
-RUN npm install -g repomix
-
 # Install essential packages
 RUN apt-get update && apt-get install -y \
     curl \
@@ -45,15 +43,17 @@ RUN mkdir -p ~/.android && \
     yes | sdkmanager --licenses && \
     sdkmanager "platform-tools" "platforms;android-33" "build-tools;33.0.0"
 
+RUN npm install -g repomix
+
 # Create non-root user
-RUN groupadd -g 1000 developer && \
-    useradd -u 1000 -g developer -m developer && \
-    echo "developer ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
-    chmod 0440 /etc/sudoers.d/developer
+RUN getent group 1000 || groupadd -g 1000 developer && \
+    getent passwd 1000 || useradd -u 1000 -g 1000 -m developer -s /bin/bash && \
+    echo "developer ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers && \
+    chmod 0440 /etc/sudoers
 
 # Set ownership for Flutter and Android directories
 RUN mkdir -p /opt/flutter /opt/android-sdk-linux && \
-    chown -R developer:developer /opt/flutter /opt/android-sdk-linux
+    chown -R 1000:1000 /opt/flutter /opt/android-sdk-linux
 
 # Download and install repomix for communicating with LLMs
 # Install Node.js, npm, and Repomix

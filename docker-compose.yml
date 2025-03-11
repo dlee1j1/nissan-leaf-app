@@ -4,7 +4,6 @@ services:
     volumes:
       # Local files mapped 
       - .:/app
-      - ./.devcontainer/etc/udev/rules.d:/etc/udev/rules.d # For physical device rules, specifically 51-android.rules
       - /opt/flutter:/opt/flutter # flutter SDK so we can do syntax highlighting in VSCode
       - ${PUB_CACHE}:${PUB_CACHE} # Docker cached volumes
       - flutter-build:/app/build
@@ -15,6 +14,8 @@ services:
       - bash-history:/commandhistory
       - "/dev/bus/usb:/dev/bus/usb" # For physical device debugging
       - /tmp/.docker.xauth:/tmp/.docker.xauth
+      #      - ./.devcontainer/etc/udev/rules.d:/etc/udev/rules.d # For physical device rules, specifically 51-android.rules
+      - ./51-android-rules:/etc/udev/rules.d/51-android-rules # For physical device rules, specifically 51-android.rules
 
     ports:
       - 8080:8080
