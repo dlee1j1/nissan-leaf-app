@@ -234,6 +234,7 @@ void _onStart(ServiceInstance service) async {
       bool success = await collectData();
       var next = computeNextDuration(current, base, success);
       log.info('going to sleep. waking up in ${next.inMinutes} minutes.');
+      current = next;
       await Future.delayed(next);
     }
   }
