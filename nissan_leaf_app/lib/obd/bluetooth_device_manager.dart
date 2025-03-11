@@ -87,20 +87,25 @@ class BluetoothDeviceManager {
     _log.info('BluetoothDeviceManager initialized');
   }
 
-  /// Request all required permissions for Bluetooth operation
+ /// Request all required permissions for Bluetooth operation
   Future<void> _requestPermissions() async {
     // Only request permissions on platforms that require them
     if (Platform.isAndroid || Platform.isIOS) {
       _log.info('Requesting Bluetooth permissions');
-      await Permission.bluetooth.request();
-      await Permission.bluetoothScan.request();
-      await Permission.bluetoothConnect.request();
-      await Permission.location.request();
+      for (var permission in [
+        Permission.bluetooth,
+        Permission.bluetoothScan,
+        Permission.bluetoothConnect,
+        Permission.location
+      ]) {
+        var isGranted = await permission.status.isGranted;
+        if (!isGranted) await permission.request();
+      }
     } else {
       _log.info('Current platform does not require explicit Bluetooth permissions');
     }
   }
-
+  
   /// Begin scanning for Bluetooth devices
   Future<List<ScanResult>> scanForDevices({
     Duration timeout = const Duration(seconds: 15),

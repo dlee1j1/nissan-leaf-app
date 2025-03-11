@@ -2,6 +2,7 @@
 import 'dart:async';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:intl/intl.dart';
+import 'package:nissan_leaf_app/components/log_viewer.dart';
 import 'package:simple_logger/simple_logger.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'async_safety.dart';
@@ -32,7 +33,16 @@ class BackgroundServiceOrchestrator implements DataOrchestrator {
         _statusController.add(status);
       }
     });
+    _setupListener();
     _log.info('Created BackgroundServiceOrchestrator');
+  }
+
+  void _setupListener() {
+    _flutterBackgroundService.on('log').listen((log) {
+      if (log != null && log['message'] != null) {
+        LogViewer.addLogFromService(log['message']);
+      }
+    });
   }
 
   @override

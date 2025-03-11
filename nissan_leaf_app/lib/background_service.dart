@@ -167,6 +167,10 @@ void _onStart(ServiceInstance service) async {
   final log = SimpleLogger();
   log.info('Background service started');
 
+  log.onLogged = (message, info) {
+    service.invoke('log', {'message': message});
+  };
+
   // Initialize with a reasonable default frequency
   int collectionFrequencyMinutes = _defaultFrequency;
 

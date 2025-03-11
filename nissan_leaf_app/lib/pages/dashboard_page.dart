@@ -444,27 +444,64 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               // App mode indicator
-              Padding(
-                padding: const EdgeInsets.only(bottom: 8.0),
-                child: Row(
-                  children: [
-                    Text(
-                      'Current Mode: ',
-                      style: Theme.of(context).textTheme.bodyLarge,
+              PopupMenuButton<AppMode>(
+                onSelected: _setMode,
+                itemBuilder: (context) => [
+                  PopupMenuItem(
+                    value: AppMode.real,
+                    child: ListTile(
+                      leading: const Icon(Icons.play_arrow),
+                      title: const Text('Real Mode'),
+                      subtitle: const Text('Background service'),
+                      trailing: _currentMode == AppMode.real
+                          ? const Icon(Icons.check, color: Colors.green)
+                          : null,
                     ),
-                    Chip(
-                      label: Text(_currentMode.toString().split('.').last,
-                          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                      backgroundColor: _currentMode == AppMode.real
-                          ? Colors.green
-                          : _currentMode == AppMode.mock
-                              ? Colors.orange
-                              : Colors.blue,
+                  ),
+                  PopupMenuItem(
+                    value: AppMode.mock,
+                    child: ListTile(
+                      leading: const Icon(Icons.content_copy),
+                      title: const Text('Mock Mode'),
+                      subtitle: const Text('Simulated data'),
+                      trailing: _currentMode == AppMode.mock
+                          ? const Icon(Icons.check, color: Colors.green)
+                          : null,
                     ),
-                  ],
+                  ),
+                  PopupMenuItem(
+                    value: AppMode.debug,
+                    child: ListTile(
+                      leading: const Icon(Icons.bug_report),
+                      title: const Text('Debug Mode'),
+                      subtitle: const Text('Direct OBD access'),
+                      trailing: _currentMode == AppMode.debug
+                          ? const Icon(Icons.check, color: Colors.green)
+                          : null,
+                    ),
+                  ),
+                ],
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 8.0),
+                  child: Row(
+                    children: [
+                      Text(
+                        'Current Mode: ',
+                        style: Theme.of(context).textTheme.bodyLarge,
+                      ),
+                      Chip(
+                        label: Text(_currentMode.toString().split('.').last,
+                            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                        backgroundColor: _currentMode == AppMode.real
+                            ? Colors.green
+                            : _currentMode == AppMode.mock
+                                ? Colors.orange
+                                : Colors.blue,
+                      ),
+                    ],
+                  ),
                 ),
               ),
-
               // Error message if any
               if (_errorMessage != null) _buildErrorMessage(_errorMessage!),
 

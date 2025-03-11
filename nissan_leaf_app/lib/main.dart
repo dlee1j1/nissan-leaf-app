@@ -17,7 +17,7 @@ final _log = SimpleLogger();
 void main() {
   _log.onLogged = (log, info) {
     // Capture logs for UI here
-    LogViewer.log(log.replaceAll(RegExp(r'\[caller info not available\] '), ''));
+    LogViewer.log(log);
   };
 
   runZonedGuarded(

@@ -1,4 +1,6 @@
-FROM ubuntu:20.04
+# ---- STAGE 2: actual build
+#FROM ubuntu:20.04
+FROM node:18-bullseye
 
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive
@@ -6,19 +8,7 @@ ENV ANDROID_SDK_ROOT=/opt/android-sdk-linux
 ENV FLUTTER_HOME=/opt/flutter
 ENV PATH=$PATH:$FLUTTER_HOME/bin:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools
 
-# Download and install repomix for communicating with LLMs
-RUN apt-get update && apt-get install -y npm && \
-   npm install -y n && \
-   n stable && \
-   npm install -y repomix
-
-# npm install -g nodemon
-
-# Install SQL Lite for database testing
-RUN apt-get update && apt-get install -y sqlite3 libsqlite3-dev
-
-# Install USB utils for Android debugging
-RUN apt-get update && apt-get install -y usbutils
+RUN npm install -g repomix
 
 # Install essential packages
 RUN apt-get update && apt-get install -y \
@@ -34,7 +24,13 @@ RUN apt-get update && apt-get install -y \
     cmake \
     ninja-build \
     pkg-config \
-    libgtk-3-dev
+    libgtk-3-dev \
+    libsqlite3-dev \
+    android-sdk-platform-tools-common \
+    udev \
+    usbutils && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
 
 # Download and setup Android SDK
 RUN mkdir -p ${ANDROID_SDK_ROOT}/cmdline-tools && \
@@ -49,12 +45,11 @@ RUN mkdir -p ~/.android && \
     yes | sdkmanager --licenses && \
     sdkmanager "platform-tools" "platforms;android-33" "build-tools;33.0.0"
 
-# Install bluetooth tools for Android
-RUN apt-get install -y \
-    android-sdk-platform-tools-common \
-    udev
-
-HEALTHCHECK --interval=5s --timeout=3s \
-    CMD ps aux | grep "[f]lutter" || exit 1
+# Download and install repomix for communicating with LLMs
+# Install Node.js, npm, and Repomix
+# RUN apt-get update && apt-get install -y curl && \
+#    curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
+#    apt-get install -y nodejs && \
+#    npm install -g repomix
 
 WORKDIR /app

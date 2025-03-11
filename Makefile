@@ -76,13 +76,19 @@ repomix-force:
 docker-build: .docker-build-stamp 
 
 .docker-build-stamp: Dockerfile
+	docker-compose down  # stop and remove running containers
 	docker-compose build 
+	docker-compose up -d 
+	sleep 3
+	docker-compose exec -T flutter_dev make setup
 	touch .docker-build-stamp
 
-docker-shell: 
+docker-shell: docker-build
 	powershell.exe -File setup-android-debugging.ps1
 	sleep 2
-	docker-compose up -d &&	docker-compose exec flutter_dev bash
+	docker-compose up -d && docker-compose exec flutter_dev bash
+
+docker-restart: docker-stop docker-shell
 
 docker-stop:
 	docker-compose down

@@ -6,7 +6,12 @@ class LogViewer extends StatelessWidget {
 
   // Add a log message
   static void log(String message) {
-    _logs.add(message);
+    _logs.add(message.replaceAll(RegExp(r'\[caller info not available\] '), ''));
+  }
+
+  static void addLogFromService(String message) {
+    // Add "[Service]" prefix to distinguish service logs
+    log("[Service] $message");
   }
 
   static void clearLogs() {

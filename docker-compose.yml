@@ -14,7 +14,6 @@ services:
       - android-sdk-linux:/opt/android-sdk-linux
       - bash-history:/commandhistory
 
-    devices:
       - "/dev/bus/usb:/dev/bus/usb" # For physical device debugging
 
     ports:
