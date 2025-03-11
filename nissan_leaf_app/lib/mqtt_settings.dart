@@ -1,6 +1,6 @@
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:simple_logger/simple_logger.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:encrypted_shared_preferences/encrypted_shared_preferences.dart';
 
 /// Model class for MQTT connection settings
 ///
@@ -33,7 +33,7 @@ class MqttSettings {
   bool enabled;
 
   // Secure storage instance
-  final FlutterSecureStorage _secureStorage = const FlutterSecureStorage();
+  final EncryptedSharedPreferences _secureStorage = EncryptedSharedPreferences();
   final _log = SimpleLogger();
 
   MqttSettings({
@@ -67,7 +67,7 @@ class MqttSettings {
   /// Returns an empty string if no password is set
   Future<String> getPassword() async {
     try {
-      return await _secureStorage.read(key: _passwordKey) ?? '';
+      return await _secureStorage.getString(_passwordKey);
     } catch (e) {
       _log.warning('Error reading password from secure storage: $e');
       return '';
@@ -77,7 +77,7 @@ class MqttSettings {
   /// Set the password in secure storage
   Future<void> setPassword(String password) async {
     try {
-      await _secureStorage.write(key: _passwordKey, value: password);
+      await _secureStorage.setString(_passwordKey, password);
     } catch (e) {
       _log.severe('Error writing password to secure storage: $e');
       rethrow;
@@ -87,7 +87,7 @@ class MqttSettings {
   /// Delete the password from secure storage
   Future<void> deletePassword() async {
     try {
-      await _secureStorage.delete(key: _passwordKey);
+      await _secureStorage.remove(_passwordKey);
     } catch (e) {
       _log.warning('Error deleting password from secure storage: $e');
     }

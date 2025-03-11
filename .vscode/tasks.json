@@ -2,49 +2,18 @@
     "version": "2.0.0",
     "tasks": [
         {
+            "label": "Configure Git for Flutter",
             "type": "shell",
-            "command": "docker-compose",
-            "args": [
-                "exec",
-                "flutter_dev",
-                "sh",
-                "-c",
-                "cd nissan_leaf_app && flutter test -r json | ../process-test-file.sh"
-                //  "make test"
-                //                "nodemon --ext dart --exec \"make test\""
-            ],
-            "problemMatcher": [
-                {
-                    "owner": "flutter",
-                    "fileLocation": [
-                        "relative",
-                        "${workspaceFolder}"
-                    ],
-                    "severity": "error",
-                    "pattern": [
-                        {
-                            "regexp": "ERROR_MARKER: (\\d+) \\| (.*) \\| (.*) \\| (.*) \\| (\\d+) \\| (\\d+)",
-                            "code": 1,
-                            "message": 2,
-                            "file": 4,
-                            "line": 5,
-                            "column": 6,
-                            "loop": true
-                        },
-                    ],
-                    "background": {
-                        "activeOnStart": true,
-                        "beginsPattern": "!!Processing",
-                        "endsPattern": "!!Done",
-                    }
-                }
-            ],
-            //            "isBackground": true,
-            "runOptions": {
-                //    "runOn": "folderOpen",
-                "instanceLimit": 1
+            "command": "git config --global --add safe.directory /opt/flutter",
+            "presentation": {
+                "reveal": "silent",
+                "panel": "dedicated",
+                "clear": true
             },
-            "label": "Flutter: Watch Tests"
+            "runOptions": {
+                "runOn": "folderOpen"
+            },
+            "problemMatcher": []
         }
     ]
 }

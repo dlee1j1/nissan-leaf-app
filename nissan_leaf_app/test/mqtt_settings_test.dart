@@ -73,5 +73,26 @@ void main() {
         equals('nissan_leaf/test_client/availability'),
       );
     });
+
+    test('should store and retrieve password securely', () async {
+      // Define a test password
+      const testPassword = 'SecureTestPassword123!';
+
+      // Set the password
+      await settings.setPassword(testPassword);
+
+      // Retrieve the password
+      final retrievedPassword = await settings.getPassword();
+
+      // Verify it matches what was stored
+      expect(retrievedPassword, equals(testPassword));
+
+      // Delete the password
+      await settings.deletePassword();
+
+      // Verify it was deleted
+      final emptyPassword = await settings.getPassword();
+      expect(emptyPassword, equals(''));
+    });
   });
 }

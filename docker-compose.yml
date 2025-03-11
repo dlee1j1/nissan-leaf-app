@@ -14,23 +14,25 @@ services:
       - bash-history:/commandhistory
       - "/dev/bus/usb:/dev/bus/usb" # For physical device debugging
       - /tmp/.docker.xauth:/tmp/.docker.xauth
-      #      - ./.devcontainer/etc/udev/rules.d:/etc/udev/rules.d # For physical device rules, specifically 51-android.rules
       - ./51-android-rules:/etc/udev/rules.d/51-android-rules # For physical device rules, specifically 51-android.rules
 
     ports:
       - 8080:8080
 
+    # Environment variables are also set in .env file
     environment:
       - DISPLAY=host.docker.internal:0
       - HISTFILE=/commandhistory/.bash_history
-      - PUB_CACHE=${PUB_CACHE}
+      - PUB_CACHE=/home/${USER}/.pub-cache
       - XAUTHORITY=/tmp/.docker.xauth
+      - DOCKER_STARTED_MARKER=/tmp/.docker_started
 
     privileged: true
 
     #    network_mode: "host" 
-    tty: true
-    stdin_open: true
+    # this is a dev container so we want to keep it alive
+    #   we touch /tmp/.docker_started to keep track of when it started
+    entrypoint: [ "/bin/bash", "-c", "make fix-permissions && tail -f /dev/null" ]
 
 # Volumes managed by Docker that persists between container runs
 volumes:
