@@ -45,6 +45,16 @@ RUN mkdir -p ~/.android && \
     yes | sdkmanager --licenses && \
     sdkmanager "platform-tools" "platforms;android-33" "build-tools;33.0.0"
 
+# Create non-root user
+RUN groupadd -g 1000 developer && \
+    useradd -u 1000 -g developer -m developer && \
+    echo "developer ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+    chmod 0440 /etc/sudoers.d/developer
+
+# Set ownership for Flutter and Android directories
+RUN mkdir -p /opt/flutter /opt/android-sdk-linux && \
+    chown -R developer:developer /opt/flutter /opt/android-sdk-linux
+
 # Download and install repomix for communicating with LLMs
 # Install Node.js, npm, and Repomix
 # RUN apt-get update && apt-get install -y curl && \

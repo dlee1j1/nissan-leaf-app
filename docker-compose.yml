@@ -13,8 +13,8 @@ services:
       - android-tools:/opt/android-tools
       - android-sdk-linux:/opt/android-sdk-linux
       - bash-history:/commandhistory
-
       - "/dev/bus/usb:/dev/bus/usb" # For physical device debugging
+      - /tmp/.docker.xauth:/tmp/.docker.xauth
 
     ports:
       - 8080:8080
@@ -23,6 +23,7 @@ services:
       - DISPLAY=host.docker.internal:0
       - HISTFILE=/commandhistory/.bash_history
       - PUB_CACHE=${PUB_CACHE}
+      - XAUTHORITY=/tmp/.docker.xauth
 
     privileged: true
 
