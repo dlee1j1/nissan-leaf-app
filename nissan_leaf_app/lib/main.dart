@@ -8,7 +8,6 @@ import 'dart:async';
 import 'pages/connection_page.dart';
 import 'pages/dashboard_page.dart';
 import 'components/log_viewer.dart';
-import 'obd/bluetooth_device_manager.dart';
 import 'background_service.dart';
 
 // Global logger instance

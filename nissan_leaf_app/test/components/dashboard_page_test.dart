@@ -1,26 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:nissan_leaf_app/obd/bluetooth_device_manager.dart';
 import 'package:nissan_leaf_app/pages/dashboard_page.dart';
 import 'package:nissan_leaf_app/components/battery_status_widget.dart';
 import 'package:nissan_leaf_app/components/readings_chart_widget.dart';
 
 void main() {
-  // Create mock LBC response that would be returned when connected to vehicle
-  final mockLbcResponse = '''
-  7BB10356101FFFFF060
-  7BB210289FFFFE763FF
-  7BB22FFCA4A09584650
-  7BB239608383E038700
-  7BB24017000239A000C
-  7BB25814C00191FB580
-  7BB260005FFFFE763FF
-  7BB27FFE56501AEFFFF''';
-
-  // Create mock range response
-  final mockRangeResponse = '''
-  7BB 03 62 0E 24 01 23''';
-
   group('DashboardPage', () {
 /*
     testWidgets('renders correctly without OBD controller', (WidgetTester tester) async {
