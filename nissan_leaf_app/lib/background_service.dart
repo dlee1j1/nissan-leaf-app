@@ -1,5 +1,6 @@
 // lib/background_service.dart
 import 'dart:async';
+import 'dart:math';
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
@@ -199,32 +200,54 @@ void _onStart(ServiceInstance service) async {
   Timer? timer;
 
   // Function to collect and store data using the orchestrator
-  Future<void> collectData() async {
+  Future<bool> collectData() async {
     try {
       log.info('Collecting battery data');
 
       // Let the orchestrator handle the collection process
-      await orchestrator.collectData();
+      return orchestrator.collectData();
     } catch (e, stackTrace) {
       log.severe('Error collecting data: $e\n$stackTrace');
       service.invoke('status', {'error': e.toString(), 'collecting': false});
+      return false;
+    }
+  }
+
+  const Duration maxDelay = Duration(minutes: 5);
+  Duration computeNextDuration(Duration current, Duration base, bool success) {
+    Duration ceiling = maxDelay > base ? maxDelay : base; // max
+    Duration next;
+    if (success) {
+      next = base;
+    } else {
+      next = (current * 2 < ceiling) ? current * 2 : ceiling; // min
+    }
+    return next;
+  }
+
+  bool keepGoing;
+  Future<void> collectDataAndKeepGoing() async {
+    Duration base = Duration(minutes: collectionFrequencyMinutes);
+    Duration current = base;
+    keepGoing = true;
+    while (keepGoing) {
+      bool success = await collectData();
+      var next = computeNextDuration(current, base, success);
+      await Future.delayed(next);
     }
   }
 
   // Function to start the collection timer
   void startCollectionTimer() {
-    timer = Timer.periodic(Duration(minutes: collectionFrequencyMinutes), (timer) async {
-      await collectData();
-    });
-
     // Also collect immediately when starting
-    collectData();
+    collectDataAndKeepGoing();
   }
 
   // Handle service lifecycle events
   service.on('stopService').listen((event) {
     log.info('Stopping background service');
-    timer?.cancel();
+//    timer?.cancel();
+    keepGoing = false;
     orchestrator.dispose();
     service.stopSelf();
   });

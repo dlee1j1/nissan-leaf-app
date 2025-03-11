@@ -3,6 +3,7 @@ import 'dart:async';
 import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+import 'package:nissan_leaf_app/async_safety.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:simple_logger/simple_logger.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -87,7 +88,7 @@ class BluetoothDeviceManager {
     _log.info('BluetoothDeviceManager initialized');
   }
 
- /// Request all required permissions for Bluetooth operation
+  /// Request all required permissions for Bluetooth operation
   Future<void> _requestPermissions() async {
     // Only request permissions on platforms that require them
     if (Platform.isAndroid || Platform.isIOS) {
@@ -96,7 +97,7 @@ class BluetoothDeviceManager {
         Permission.bluetooth,
         Permission.bluetoothScan,
         Permission.bluetoothConnect,
-        Permission.location
+        Permission.location,
       ]) {
         var isGranted = await permission.status.isGranted;
         if (!isGranted) await permission.request();
@@ -105,7 +106,7 @@ class BluetoothDeviceManager {
       _log.info('Current platform does not require explicit Bluetooth permissions');
     }
   }
-  
+
   /// Begin scanning for Bluetooth devices
   Future<List<ScanResult>> scanForDevices({
     Duration timeout = const Duration(seconds: 15),
@@ -188,7 +189,9 @@ class BluetoothDeviceManager {
 
       _connectedDevice = device;
       _updateStatus(
-          ConnectionStatus.connected, 'Connected to ${device.platformName}. Initializing...');
+        ConnectionStatus.connected,
+        'Connected to ${device.platformName}. Initializing...',
+      );
 
       // Discover services
       var services = await _bluetoothService.discoverServices(device);
@@ -206,10 +209,12 @@ class BluetoothDeviceManager {
       _log.info('Using service: ${targetService.uuid}');
 
       // Get the characteristic for read/write
-      _characteristic = targetService.characteristics
-          .firstWhere((c) => c.uuid.toString() == CHARACTERISTIC_UUID.substring(4, 8), orElse: () {
-        throw Exception('Required OBD characteristic not found');
-      });
+      _characteristic = targetService.characteristics.firstWhere(
+        (c) => c.uuid.toString() == CHARACTERISTIC_UUID.substring(4, 8),
+        orElse: () {
+          throw Exception('Required OBD characteristic not found');
+        },
+      );
 
       _log.info('Using characteristic ${_characteristic!.uuid}');
 
@@ -283,9 +288,7 @@ class BluetoothDeviceManager {
       _log.info('Attempting to reconnect to saved device: $savedDeviceId');
 
       // Create device from ID
-      final device = BluetoothDevice(
-        remoteId: DeviceIdentifier(savedDeviceId),
-      );
+      final device = BluetoothDevice(remoteId: DeviceIdentifier(savedDeviceId));
 
       return await connectToDevice(device);
     } catch (e) {
@@ -322,35 +325,26 @@ class BluetoothDeviceManager {
   //   guard but it allows all callers to get the same result.
   //  It also exposes the future which we can export for testing purposes.
   //
-  Future<bool>? _autoConnectFuture;
-
-  @visibleForTesting
-  Future<bool>? get autoConnectFuture => _autoConnectFuture;
-
-  Future<bool> autoConnectToObd() async {
-    if (_autoConnectFuture != null) {
-      return _autoConnectFuture!;
-    }
-
-    // Start the connection attempt and cache the future.
-    final newFuture = _autoConnectToObd().whenComplete(() {
-      // Reset the cached future only when the attempt has completed.
-      _autoConnectFuture = null;
-    });
-    _autoConnectFuture = newFuture;
-
-    return newFuture;
+  final SingleFlight<bool> _autoConnectGuard = SingleFlight<bool>();
+  Future<bool> autoConnectToObd() {
+    return _autoConnectGuard.run(() => _autoConnectToObd());
   }
 
   Future<bool> _autoConnectToObd() async {
-    // First try reconnecting to a saved device
-    if (await _reconnectToSavedDevice()) {
-      return true;
-    }
-
     // If no saved device or reconnection failed, scan for devices
     try {
-      final results = await scanForDevices();
+      // scan is cheap - so start with that
+      final results = await scanForDevices(timeout: Duration(seconds: 5));
+
+      // If no devices at all, bail out early
+      if (results.isEmpty) {
+        _log.info('No Bluetooth devices in range, skipping connection attempts');
+        return false;
+      }
+
+      // Check if our saved device is in the scan results
+      final prefs = await SharedPreferences.getInstance();
+      final savedDeviceId = prefs.getString('obd_device_id');
 
       // Sort devices to prioritize those with OBD-related names
       var potentialDevices = results.toList();
@@ -360,6 +354,10 @@ class BluetoothDeviceManager {
         bool bHasObdName =
             b.device.platformName.contains("OBD") || b.device.platformName.contains("ELM");
 
+        if (savedDeviceId != null) {
+          if (a.device.remoteId.str == savedDeviceId) return -1;
+          if (b.device.remoteId.str == savedDeviceId) return 1;
+        }
         if (aHasObdName && !bHasObdName) return -1;
         if (!aHasObdName && bHasObdName) return 1;
         return 0;
@@ -580,10 +578,7 @@ class DeviceErrorStats {
 /// A simple debug command class for testing
 class _DebugCommand extends OBDCommand {
   _DebugCommand({required super.command, required super.header})
-      : super(
-          name: 'debug',
-          description: 'Debug Command',
-        );
+      : super(name: 'debug', description: 'Debug Command');
 
   void setController(ObdController controller) {
     OBDCommand.setObdController(controller);
