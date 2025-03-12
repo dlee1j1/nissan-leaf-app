@@ -110,8 +110,13 @@ class DirectOBDOrchestrator implements DataOrchestrator {
   @override
   Stream<Map<String, dynamic>> get statusStream => _statusController.stream;
 
+  final SingleFlight<bool> _collectGuard = SingleFlight<bool>();
   @override
-  Future<bool> collectData() async {
+  Future<bool> collectData() {
+    return _collectGuard.run(() => _collectData());
+  }
+
+  Future<bool> _collectData() async {
     try {
       _initialize();
       _statusController.add({'collecting': true});

@@ -334,7 +334,7 @@ class BluetoothDeviceManager {
     // If no saved device or reconnection failed, scan for devices
     try {
       // scan is cheap - so start with that
-      final results = await scanForDevices(timeout: Duration(seconds: 5));
+      final results = await scanForDevices(timeout: Duration(seconds: 2));
 
       // If no devices at all, bail out early
       if (results.isEmpty) {

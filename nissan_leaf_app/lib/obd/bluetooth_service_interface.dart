@@ -73,9 +73,9 @@ class FlutterBluetoothService implements BluetoothServiceInterface {
     try {
       // Start the scan with the given parameters
       await FlutterBluePlus.startScan(
-        timeout: timeout,
-        withNames: nameFilters.isNotEmpty ? nameFilters : [],
-      );
+          timeout: timeout,
+          withNames: nameFilters.isNotEmpty ? nameFilters : [],
+          androidScanMode: AndroidScanMode.lowPower);
 
       // Wait for scan to complete
       await FlutterBluePlus.isScanning.where((val) => val == false).first;
