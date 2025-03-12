@@ -25,7 +25,6 @@ services:
       - HISTFILE=/commandhistory/.bash_history
       - PUB_CACHE=/home/${USER}/.pub-cache
       - XAUTHORITY=/tmp/.docker.xauth
-      - DOCKER_STARTED_MARKER=/tmp/.docker_started
 
     privileged: true
 

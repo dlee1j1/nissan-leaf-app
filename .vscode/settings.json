@@ -54,4 +54,14 @@
     },
     "cody.chat.preInstruction": "project is to leverage python code (copied into the reference directory) that talks to OBD dongle and make it work for android and IOS app. The app should store the data locally then sync to Home Assistant when it sees the instance",
     "makefile.configureOnOpen": false,
+    "filewatcher.commands": [
+        {
+            "match": "nissan_leaf_app/pubspec.yaml",
+            "isRegex": false,
+            "cmd": "cd ${workspaceRoot} && echo '$(date): pubspec.yaml changed - running release build...' && cd nissan_leaf_app && flutter build apk --release",
+            "event": "onFileChange",
+            "terminal": "dedicated",
+            "notification": "show"
+        }
+    ]
 }

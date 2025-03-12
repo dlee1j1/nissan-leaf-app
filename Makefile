@@ -24,15 +24,6 @@ fix-permissions:
 	chmod -Rf go+w /opt/flutter/flutter_tools/ || true
 	@echo "Permissions fixed for both WSL and container access"
 
-# Define the gitconfig file path as a variable
-GITCONFIG := $(HOME)/.gitconfig
-
-# Target to ensure gitconfig exists with proper configuration
-# Note: find DOCKER_STARTED_MARKER defined in docker-compose.yml
-$(GITCONFIG): $(DOCKER_STARTED_MARKER)
-	@echo "Creating/updating Git configuration..."
-	@git config --global --add safe.directory /opt/flutter
-	@touch $(GITCONFIG)
 
 
 DART_FILES := $(shell find nissan_leaf_app/lib nissan_leaf_app/test -name "*.dart")
@@ -56,19 +47,19 @@ check-adb:
 	@adb devices | grep -q "device$$" || (echo "Error: No devices connected or authorized. Check ADB devices list:" && adb devices && exit 1)
 	@echo "ADB is running and devices are available."
 
-analyze: $(GITCONFIG)
+analyze:
 	cd nissan_leaf_app && flutter analyze | grep -v "info •"
 
-linux: $(GITCONFIG) test # doesn't work due to issues with bluetooth and X inside the container. maybe it will work in a linux environment? 
+linux:  test # doesn't work due to issues with bluetooth and X inside the container. maybe it will work in a linux environment? 
 	cd nissan_leaf_app && flutter run -d linux
 
-android: $(GITCONFIG) check-adb test
+android: check-adb test
 	cd nissan_leaf_app && flutter run -d $(shell adb devices | grep -v "List" | grep "device$$" | head -1 | cut -f1)
 
-apk: $(GITCONFIG) test
+apk:  test
 	cd nissan_leaf_app && flutter build apk --release
 
-web: $(GITCONFIG) test
+web:  test
 	cd nissan_leaf_app && flutter run -d web-server --web-hostname=0.0.0.0 --web-port=8080
 
 clean:
