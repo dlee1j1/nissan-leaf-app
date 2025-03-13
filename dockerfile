@@ -29,6 +29,8 @@ RUN apt-get update && apt-get install -y \
     usbutils && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
+# install before the Android SDK which may change
+RUN npm install -g repomix
 
 # Download and setup Android SDK
 RUN mkdir -p ${ANDROID_SDK_ROOT}/cmdline-tools && \
@@ -43,17 +45,16 @@ RUN mkdir -p ~/.android && \
     yes | sdkmanager --licenses && \
     sdkmanager "platform-tools" "platforms;android-33" "build-tools;33.0.0"
 
-RUN npm install -g repomix
 
 # Create non-root user
-RUN getent group 1000 || groupadd -g 1000 developer && \
-    getent passwd 1000 || useradd -u 1000 -g 1000 -m developer -s /bin/bash && \
+RUN getent group 1001 || groupadd -g 1001 developer && \
+    getent passwd 1001 || useradd -u 1001 -g 1001 -m developer -s /bin/bash && \
     echo "developer ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers && \
     chmod 0440 /etc/sudoers
 
 # Set ownership for Flutter and Android directories
 RUN mkdir -p /opt/flutter /opt/android-sdk-linux && \
-    chown -R 1000:1000 /opt/flutter /opt/android-sdk-linux
+    chown -R 1001:1001 /opt/flutter /opt/android-sdk-linux
 
 # Download and install repomix for communicating with LLMs
 # Install Node.js, npm, and Repomix

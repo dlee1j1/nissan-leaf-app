@@ -22,6 +22,7 @@ setup:
 fix-permissions:
 	chmod -R go+w .
 	chmod -Rf go+w /opt/flutter/flutter_tools/ || true
+#	chmod -Rf go+w /root || true
 	@echo "Permissions fixed for both WSL and container access"
 
 
@@ -58,6 +59,7 @@ android: check-adb test
 
 apk:  test
 	cd nissan_leaf_app && flutter build apk --release
+	mv nissan_leaf_app/build/app/outputs/apk/release/app-release.apk nissan-leaf-app.apk
 
 web:  test
 	cd nissan_leaf_app && flutter run -d web-server --web-hostname=0.0.0.0 --web-port=8080

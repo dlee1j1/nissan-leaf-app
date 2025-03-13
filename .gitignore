@@ -55,6 +55,7 @@ reference/
 
 # all generated files
 [Gg]enerated*
+*.apk
 
 # touch files
 .test_timestamp
