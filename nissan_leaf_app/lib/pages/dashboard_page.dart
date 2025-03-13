@@ -187,7 +187,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       // App comes to foreground - refresh if needed
       if (_currentReading == null ||
           DateTime.now().difference(_currentReading!.timestamp).inMinutes > 10) {
-        _refreshCurrentReading();
+        _loadHistoricalData().then((_) => _refreshCurrentReading());
       }
     }
   }

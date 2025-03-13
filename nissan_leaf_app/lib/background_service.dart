@@ -196,7 +196,7 @@ void _onStart(ServiceInstance service) async {
   });
 
   // Start periodic collection
-  Timer? timer;
+  // Timer? timer;
 
   // Function to collect and store data using the orchestrator
   Future<bool> collectData() async {
@@ -214,27 +214,41 @@ void _onStart(ServiceInstance service) async {
 
   const Duration maxDelay = Duration(minutes: 5);
   Duration computeNextDuration(Duration current, Duration base, bool success) {
-    Duration ceiling = maxDelay > base ? maxDelay : base; // max
+    if (base > maxDelay) return base; // if base is large anyway, don't need to do backoff
     Duration next;
     if (success) {
       next = base;
     } else {
-      next = (current * 2 < ceiling) ? current * 2 : ceiling; // min
+      next = (current * 2 < maxDelay) ? current * 2 : maxDelay;
     }
     return next;
   }
 
-  bool keepGoing;
+  bool keepGoing = false;
+  Duration waitBetweenCollections;
+  Completer<void>? sleepCompleter;
+  Timer? sleepTimer;
+
   Future<void> collectDataAndKeepGoing() async {
     Duration base = Duration(minutes: collectionFrequencyMinutes);
-    Duration current = base;
+    waitBetweenCollections = base;
     keepGoing = true;
     while (keepGoing) {
       bool success = await collectData();
-      var next = computeNextDuration(current, base, success);
+      var next = computeNextDuration(waitBetweenCollections, base, success);
       log.info('going to sleep. waking up in ${next.inMinutes} minutes.');
-      current = next;
-      await Future.delayed(next);
+      waitBetweenCollections = next;
+
+      // Instead of directly using Future.delayed(next), use a completer that can be completed early
+      sleepCompleter = Completer<void>();
+      sleepTimer = Timer(next, () {
+        if (!sleepCompleter!.isCompleted) {
+          sleepCompleter!.complete();
+        }
+      });
+
+      // Wait for either the timer to finish or manual interruption
+      await sleepCompleter!.future;
     }
   }
 
@@ -259,7 +273,7 @@ void _onStart(ServiceInstance service) async {
       log.info('Updated collection frequency to $collectionFrequencyMinutes minutes');
 
       // Restart the timer with the new frequency
-      timer?.cancel();
+//      timer?.cancel();
       startCollectionTimer();
 
       // Update notification
@@ -273,7 +287,16 @@ void _onStart(ServiceInstance service) async {
   });
 
   service.on('manualCollect').listen((event) async {
-    await collectData();
+    // if we have a sleep timer that means there is something waiting to
+    // collect data - just wake it up and it will grab the data
+    // otherwise, just call collect
+    if (keepGoing && sleepCompleter != null && !sleepCompleter!.isCompleted) {
+      log.info('Resetting collection cycle due to manual collection');
+      sleepTimer?.cancel();
+      sleepCompleter!.complete(); // This will wake up the sleeping loop
+    } else {
+      await collectData();
+    }
   });
 
   // Start the collection timer
