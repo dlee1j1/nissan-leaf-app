@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:nissan_leaf_app/components/log_viewer.dart';
 import 'package:nissan_leaf_app/mqtt_client.dart';
-import 'package:nissan_leaf_app/obd/connection_status.dart'
+import 'package:nissan_leaf_app/obd/connection_status.dart';
 import 'package:simple_logger/simple_logger.dart';
 import 'dart:async';
 import '../data/reading_model.dart';

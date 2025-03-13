@@ -8,6 +8,7 @@ import 'package:nissan_leaf_app/data/reading_model.dart';
 import 'package:nissan_leaf_app/mqtt_client.dart';
 import 'package:nissan_leaf_app/obd/obd_command.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:nissan_leaf_app/obd/obd_connector.dart';
 
 // Create mock classes for dependencies
 class MockBluetoothDeviceManager extends Mock implements BluetoothDeviceManager {}
@@ -32,9 +33,7 @@ void main() {
     mockMqttClient = MockMqttClient();
 
     // Create a mock OBDConnector that uses the mock device manager
-    final mockConnector = OBDConnector.forTesting(
-      deviceManager: mockDeviceManager
-    );
+    final mockConnector = OBDConnector.forTesting(deviceManager: mockDeviceManager);
 
     // Reset shared preferences
     SharedPreferences.setMockInitialValues({});
