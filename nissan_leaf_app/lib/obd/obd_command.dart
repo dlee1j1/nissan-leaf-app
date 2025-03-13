@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+
 import 'obd_controller.dart';
 import 'can_protocol_handler.dart';
 import 'package:simple_logger/simple_logger.dart';
@@ -122,8 +124,21 @@ abstract class OBDCommand {
     required this.header,
   });
 
+  // test hook
+  static Future<Map<String, dynamic>> Function(OBDCommand command)? _testRunOverride;
+  @visibleForTesting
+  static void setTestRunOverride(
+      Future<Map<String, dynamic>> Function(OBDCommand command)? override) {
+    _testRunOverride = override;
+  }
+
   // Send the command and return the response
   Future<Map<String, dynamic>> run() async {
+    // If a test run override is provided, use it
+    if (_testRunOverride != null) {
+      return _testRunOverride!(this);
+    }
+
     if (_obdController == null) {
       throw Exception('ObdController not initialized. Call OBDCommand.initialize() first.');
     }

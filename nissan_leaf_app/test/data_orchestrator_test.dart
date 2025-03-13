@@ -77,8 +77,7 @@ void main() {
         when(() => mockDeviceManager.initialize()).thenAnswer((_) async {});
         when(() => mockDeviceManager.isConnected).thenReturn(false);
         when(() => mockDeviceManager.autoConnectToObd()).thenAnswer((_) async => true);
-        when(() => mockDeviceManager.collectCarData(disconnectAfter: any(named: 'disconnectAfter')))
-            .thenAnswer((_) async => carData);
+        when(() => mockDeviceManager.collectCarData()).thenAnswer((_) async => carData);
 
         // Mock database behavior
         when(() => mockDatabase.insertReading(any())).thenAnswer((_) async => 1);
@@ -99,9 +98,7 @@ void main() {
         expect(statusUpdates.last['stateOfCharge'], 85);
 
         // Verify mock interactions
-        verify(() =>
-                mockDeviceManager.collectCarData(disconnectAfter: any(named: 'disconnectAfter')))
-            .called(1);
+        verify(() => mockDeviceManager.collectCarData()).called(1);
         verify(() => mockDatabase.insertReading(any())).called(1);
       } finally {
         subscription.cancel();
@@ -128,8 +125,7 @@ void main() {
       when(() => mockDeviceManager.initialize()).thenAnswer((_) async {});
       when(() => mockDeviceManager.isConnected).thenReturn(false);
       when(() => mockDeviceManager.autoConnectToObd()).thenAnswer((_) async => true);
-      when(() => mockDeviceManager.collectCarData(disconnectAfter: any(named: 'disconnectAfter')))
-          .thenAnswer((_) async => carData);
+      when(() => mockDeviceManager.collectCarData()).thenAnswer((_) async => carData);
       when(() => mockDatabase.insertReading(any())).thenAnswer((_) async => 1);
       when(() => mockMqttClient.isConnected).thenReturn(false);
 
@@ -180,8 +176,7 @@ void main() {
       when(() => mockDeviceManager.initialize()).thenAnswer((_) async {});
       when(() => mockDeviceManager.isConnected).thenReturn(false);
       when(() => mockDeviceManager.autoConnectToObd()).thenAnswer((_) async => true);
-      when(() => mockDeviceManager.collectCarData(disconnectAfter: any(named: 'disconnectAfter')))
-          .thenAnswer((_) async => carData);
+      when(() => mockDeviceManager.collectCarData()).thenAnswer((_) async => carData);
       when(() => mockDatabase.insertReading(any())).thenAnswer((_) async => 1);
       when(() => mockMqttClient.isConnected).thenReturn(false);
 
@@ -212,7 +207,7 @@ void main() {
       when(() => mockDeviceManager.initialize()).thenAnswer((_) async {});
       when(() => mockDeviceManager.isConnected).thenReturn(false);
       when(() => mockDeviceManager.autoConnectToObd()).thenAnswer((_) async => true);
-      when(() => mockDeviceManager.collectCarData(disconnectAfter: any(named: 'disconnectAfter')))
+      when(() => mockDeviceManager.collectCarData())
           .thenAnswer((_) async => null); // Return null to simulate failure
 
       // Create a completer that will complete when error is received
@@ -254,8 +249,7 @@ void main() {
       when(() => mockDeviceManager.initialize()).thenAnswer((_) async {});
       when(() => mockDeviceManager.isConnected).thenReturn(false);
       when(() => mockDeviceManager.autoConnectToObd()).thenAnswer((_) async => true);
-      when(() => mockDeviceManager.collectCarData(disconnectAfter: any(named: 'disconnectAfter')))
-          .thenAnswer((_) async => carData);
+      when(() => mockDeviceManager.collectCarData()).thenAnswer((_) async => carData);
       when(() => mockDatabase.insertReading(any())).thenAnswer((_) async => 1);
 
       // Mock MQTT client is connected
@@ -300,8 +294,7 @@ void main() {
       when(() => mockDeviceManager.initialize()).thenAnswer((_) async {});
       when(() => mockDeviceManager.isConnected).thenReturn(false);
       when(() => mockDeviceManager.autoConnectToObd()).thenAnswer((_) async => true);
-      when(() => mockDeviceManager.collectCarData(disconnectAfter: any(named: 'disconnectAfter')))
-          .thenAnswer((_) async => carData);
+      when(() => mockDeviceManager.collectCarData()).thenAnswer((_) async => carData);
       when(() => mockDatabase.insertReading(any())).thenAnswer((_) async => 1);
 
       // Mock MQTT client is connected but publishing throws an error

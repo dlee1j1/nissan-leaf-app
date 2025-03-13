@@ -32,6 +32,12 @@ class BluetoothDeviceManager {
     _bluetoothService = bluetoothService;
   }
 
+  ObdController Function(dynamic params) _obdControllerFactory = (params) => ObdController(params);
+  @visibleForTesting
+  void setObdControllerFactoryForTesting(ObdController Function(dynamic params) factory) {
+    _obdControllerFactory = factory;
+  }
+
   final _log = SimpleLogger();
 
   // State variables
@@ -57,7 +63,6 @@ class BluetoothDeviceManager {
   }
 
   /// Get error statistics for a device
-  @visibleForTesting
   DeviceErrorStats? getDeviceErrorStats(String deviceId) {
     return _deviceErrorStats[deviceId];
   }
@@ -219,7 +224,9 @@ class BluetoothDeviceManager {
       _log.info('Using characteristic ${_characteristic!.uuid}');
 
       // Create and initialize ObdController
-      _obdController = ObdController(_characteristic!);
+      //   use this convoluted method to enable mocking of ObdController in tests
+      //    i.e., in test you would use ObdController.setFactory(MockObdControllerFactory);
+      _obdController = _obdControllerFactory(_characteristic!);
       await _obdController!.initialize();
 
       // Set controller for OBD commands
@@ -251,50 +258,13 @@ class BluetoothDeviceManager {
       _recordConnectionError(device, e.toString());
 
       // Clean up if connection failed
-      if (_connectedDevice != null) {
-        try {
-          await _bluetoothService.disconnectDevice(_connectedDevice!);
-        } catch (_) {}
-        _connectedDevice = null;
-      }
-
-      _characteristic = null;
-      _obdController = null;
-
+      disconnect();
       return false;
     } finally {
       _isConnecting = false;
     }
-  }
-
-  /// Attempt to reconnect to the last known device
-  Future<bool> _reconnectToSavedDevice() async {
-    if (!_isInitialized) await initialize();
-
-    if (_connectedDevice != null) {
-      _log.info('Already connected to a device');
-      return true;
-    }
-
-    final prefs = await SharedPreferences.getInstance();
-    final savedDeviceId = prefs.getString('obd_device_id');
-
-    if (savedDeviceId == null) {
-      _log.info('No saved device found');
-      return false;
-    }
-
-    try {
-      _log.info('Attempting to reconnect to saved device: $savedDeviceId');
-
-      // Create device from ID
-      final device = BluetoothDevice(remoteId: DeviceIdentifier(savedDeviceId));
-
-      return await connectToDevice(device);
-    } catch (e) {
-      _log.warning('Failed to reconnect to saved device: $e');
-      return false;
-    }
+    // should never reach here, if static analysis doesn't show below as an error, something is wrong
+    throw Exception('Unreachable code reached');
   }
 
   /// Disconnect from the current device
@@ -380,24 +350,25 @@ class BluetoothDeviceManager {
               return true;
             } else {
               _log.info('Device responded but returned empty probe result, trying next device');
-              await disconnect();
             }
+            await disconnect();
           } catch (e) {
             _log.info('Device failed OBD probe test: $e');
-            await disconnect();
           }
         }
       }
 
       _log.warning('No valid OBD devices found after scanning');
-      return false;
     } catch (e) {
       _log.warning('Auto-connection error: $e');
-      return false;
     }
+
+    // if we got here, we didn't find a valid device. disconnect and return false
+    await disconnect();
+    return false;
   }
 
-  Future<Map<String, dynamic>?> collectCarData({bool disconnectAfter = true}) async {
+  Future<Map<String, dynamic>?> collectCarData() async {
     if (!isConnected) {
       try {
         bool connected = await autoConnectToObd();
@@ -420,15 +391,13 @@ class BluetoothDeviceManager {
         return null;
       }
 
-      // Optionally disconnect
-      if (disconnectAfter) {
-        await disconnect();
-      }
-
       return {...batteryData, ...rangeData, 'timestamp': DateTime.now().millisecondsSinceEpoch};
     } catch (e) {
       _log.severe('Error collecting data: $e');
       return null;
+    } finally {
+      // always disconnect
+      await disconnect();
     }
   }
 

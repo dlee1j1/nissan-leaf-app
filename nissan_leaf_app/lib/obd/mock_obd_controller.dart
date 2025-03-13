@@ -11,6 +11,11 @@ class MockObdController extends ObdController {
   MockObdController(this.mockResponse) : super.test();
 
   @override
+  Future<void> initialize() async {
+    // No need to initialize for mock
+  }
+
+  @override
   Future<String> sendCommand(String command, {bool expectOk = true}) async {
     sentCommands.add(command);
 

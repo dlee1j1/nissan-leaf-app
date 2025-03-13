@@ -2,9 +2,12 @@
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+import 'package:http/http.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:nissan_leaf_app/obd/bluetooth_device_manager.dart';
 import 'package:nissan_leaf_app/obd/bluetooth_service_interface.dart';
+import 'package:nissan_leaf_app/obd/mock_obd_controller.dart';
+import 'package:nissan_leaf_app/obd/obd_command.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
 import '../utils/fake_async_utils.dart';
@@ -156,6 +159,7 @@ void main() {
     bluetoothHelper = BluetoothServiceTestHelper();
     manager = BluetoothDeviceManager.instance;
     manager.setBluetoothServiceForTesting(bluetoothHelper.mock);
+    manager.setObdControllerFactoryForTesting((params) => MockObdController(params));
 
     // Initialize manager - permissions will be automatically skipped in test environment
     // since it's neither Android nor iOS
@@ -246,6 +250,19 @@ void main() {
 
       // Assert
       bluetoothHelper.verifyConnectionAttemptedFor(mockDevice);
+    });
+
+    test('autoConnectToObd should exit early when no devices found', () async {
+      // Setup empty scan results
+      bluetoothHelper.setupBluetoothOn();
+      bluetoothHelper.setupSuccessfulScan([]);
+
+      // Act
+      final result = await manager.autoConnectToObd();
+
+      // Assert
+      expect(result, false);
+      verifyNever(() => bluetoothHelper.mock.connectToDevice(any()));
     });
   });
 
@@ -386,6 +403,79 @@ void main() {
 
       // Should have attempted to connect
       verify(() => bluetoothHelper.mock.connectToDevice(mockDevice)).called(3);
+    });
+  });
+  group('OBDDevice Error Handling and Recovery', () {
+    setUp(() {
+      // Reset any test overrides
+      OBDCommand.setTestRunOverride(null);
+    });
+
+    test('autoConnectToObd should properly disconnect after failed probe test', () async {
+      // Setup successful device connection
+      bluetoothHelper.setupBluetoothOn();
+      bluetoothHelper.setupSuccessfulScan([mockScanResult]);
+      bluetoothHelper.setupSuccessfulConnection(mockDevice);
+      bluetoothHelper.setupSuccessfulServiceDiscovery(mockDevice, [mockService]);
+
+      // Make the probe command throw an exception
+      OBDCommand.setTestRunOverride((cmd) async {
+        if (cmd == OBDCommand.probe) {
+          throw Exception('Simulated probe failure');
+        }
+        return {};
+      });
+
+      // Act
+      final result = await manager.autoConnectToObd();
+
+      // Assert
+      expect(result, false);
+      bluetoothHelper.verifyDisconnectionFrom(mockDevice);
+    });
+
+    test('autoConnectToObd should disconnect when probe returns empty result', () async {
+      bluetoothHelper.setupBluetoothOn();
+      bluetoothHelper.setupSuccessfulScan([mockScanResult]);
+      bluetoothHelper.setupSuccessfulConnection(mockDevice);
+      bluetoothHelper.setupSuccessfulServiceDiscovery(mockDevice, [mockService]);
+
+      // Make the probe command return empty result
+      OBDCommand.setTestRunOverride((cmd) async {
+        if (cmd == OBDCommand.probe) {
+          return {}; // Empty result
+        }
+        return {'some_data': 'value'};
+      });
+
+      // Act
+      final result = await manager.autoConnectToObd();
+
+      // Assert
+      expect(result, false);
+      bluetoothHelper.verifyDisconnectionFrom(mockDevice);
+    });
+
+    test('collectCarData should disconnect even if OBD commands fail', () async {
+      // Setup successful connection
+      bluetoothHelper.setupBluetoothOn();
+      bluetoothHelper.setupSuccessfulConnection(mockDevice);
+      bluetoothHelper.setupSuccessfulServiceDiscovery(mockDevice, [mockService]);
+      bluetoothHelper.setupSuccessfulScan([mockScanResult]);
+
+      // Make the lbc command throw an exception
+      OBDCommand.setTestRunOverride((cmd) async {
+        if (cmd == OBDCommand.lbc) {
+          throw Exception('Simulated LBC command failure');
+        }
+        return {'soome_data': 'value'};
+      });
+
+      // Act
+      await manager.collectCarData();
+
+      // Assert - should disconnect despite the error
+      bluetoothHelper.verifyDisconnectionFrom(mockDevice);
     });
   });
 }
