@@ -11,6 +11,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'bluetooth_service_interface.dart';
 import '../obd/obd_controller.dart';
 import '../obd/obd_command.dart';
+import 'connection_status.dart';
 
 // Constants for Bluetooth connectivity
 // ignore: constant_identifier_names
@@ -499,18 +500,6 @@ class BluetoothDeviceManager {
   void dispose() {
     _connectionStatusController.close();
   }
-}
-
-/// Connection status enum
-enum ConnectionStatus {
-  disconnected,
-  scanning,
-  scanComplete,
-  connecting,
-  connected,
-  ready,
-  disconnecting,
-  error,
 }
 
 /// Track error statistics for a specific device

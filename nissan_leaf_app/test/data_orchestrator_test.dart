@@ -31,12 +31,17 @@ void main() {
     mockDatabase = MockReadingsDatabase();
     mockMqttClient = MockMqttClient();
 
+    // Create a mock OBDConnector that uses the mock device manager
+    final mockConnector = OBDConnector.forTesting(
+      deviceManager: mockDeviceManager
+    );
+
     // Reset shared preferences
     SharedPreferences.setMockInitialValues({});
 
     // Set dependencies with mocks
     orchestrator = DirectOBDOrchestrator(
-      deviceManager: mockDeviceManager,
+      obdConnector: mockConnector,
       mqttClient: mockMqttClient,
       db: mockDatabase,
     );

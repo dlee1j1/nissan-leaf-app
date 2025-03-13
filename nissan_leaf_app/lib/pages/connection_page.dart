@@ -2,9 +2,10 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+import 'package:nissan_leaf_app/obd/obd_connector.dart';
+import 'package:nissan_leaf_app/obd/connection_status.dart';
 import 'package:simple_logger/simple_logger.dart';
 
-import '../obd/bluetooth_device_manager.dart';
 import '../components/log_viewer.dart';
 import '../components/obd_commands_panel.dart';
 
@@ -19,7 +20,7 @@ class ConnectionPage extends StatefulWidget {
 
 class _ConnectionPageState extends State<ConnectionPage> {
   final _log = SimpleLogger();
-  final _manager = BluetoothDeviceManager.instance;
+  final _manager = OBDConnector();
 
   List<ScanResult> _devices = [];
   String _connectionStatus = 'Disconnected';
