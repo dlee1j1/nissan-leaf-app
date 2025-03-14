@@ -2,7 +2,6 @@
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
-import 'package:http/http.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:nissan_leaf_app/obd/bluetooth_device_manager.dart';
 import 'package:nissan_leaf_app/obd/bluetooth_service_interface.dart';

@@ -1,5 +1,6 @@
 # Define include patterns (without quotes)
-APP_INCLUDE := nissan_leaf_app/lib/*.dart,.devcontainer,.vscode/**/*.json,.env,.gitignore,docker*,Makefile,process-test-file.sh,setup-android-debugging.ps1,repomix/Makefile
+DEV_ENV_INCLUDE := .devcontainer,.vscode/**/*.json,.env,.gitignore,docker*,Makefile,process-test-file.sh,setup-android-debugging.ps1,repomix/Makefile
+APP_INCLUDE := nissan_leaf_app/lib/*.dart,nissan_leaf_app/test/*.dart
 DATA_INCLUDE := nissan_leaf_app/lib/data/*.dart,nissan_leaf_app/test/data/*.dart
 UI_INCLUDE := nissan_leaf_app/lib/components/*.dart,nissan_leaf_app/test/components/*.dart,nissan_leaf_app/lib/pages/*.dart
 OBD_INCLUDE := nissan_leaf_app/lib/obd/*.dart,nissan_leaf_app/test/obd/*.dart
@@ -16,7 +17,7 @@ $(shell find $(addprefix ../, $(subst $(comma),$(space),$(1))) -type f 2>/dev/nu
 endef
 
 # Default target
-all: app-base.rmx data.rmx UI-components.rmx obd.rmx
+all: dev-env.rmx app-base.rmx data.rmx UI-components.rmx obd.rmx
 
 debug:
 	@echo "Pattern: $(APP_INCLUDE)"
@@ -24,6 +25,9 @@ debug:
 
 
 # Rules with direct dependency tracking
+dev-env.rmx: $(call get_source_files,$(DEV_ENV_INCLUDE))
+	cd .. && repomix -o repomix/$@ --include "$(DEV_ENV_INCLUDE)"
+
 app-base.rmx: $(call get_source_files,$(APP_INCLUDE))
 	cd .. && repomix -o repomix/$@ --include "$(APP_INCLUDE)"
 

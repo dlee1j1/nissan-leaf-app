@@ -26,16 +26,16 @@ class _ServiceControlWidgetState extends State<ServiceControlWidget> {
 
   Future<void> _initializeService() async {
     // Initialize the service
-    await BackgroundService.initialize();
+    await BackgroundServiceController.initialize();
 
     // Check if the service is running
-    _isServiceRunning = await BackgroundService.isServiceRunning();
+    _isServiceRunning = await BackgroundServiceController.isServiceRunning();
 
     // Get the current collection frequency
-    _collectionFrequencyMinutes = await BackgroundService.getCollectionFrequency();
+    _collectionFrequencyMinutes = await BackgroundServiceController.getCollectionFrequency();
 
     // Listen to service status updates
-    _serviceStatusSubscription = BackgroundService.getStatusStream().listen((event) {
+    _serviceStatusSubscription = BackgroundServiceController.getStatusStream().listen((event) {
       if (event == null) return;
 
       setState(() {
@@ -63,13 +63,13 @@ class _ServiceControlWidgetState extends State<ServiceControlWidget> {
 
     try {
       if (_isServiceRunning) {
-        await BackgroundService.stopService();
+        await BackgroundServiceController.stopService();
       } else {
-        await BackgroundService.startService();
+        await BackgroundServiceController.startService();
       }
 
       // Update the service state
-      _isServiceRunning = await BackgroundService.isServiceRunning();
+      _isServiceRunning = await BackgroundServiceController.isServiceRunning();
       setState(() {});
     } catch (e) {
       setState(() {
@@ -80,7 +80,7 @@ class _ServiceControlWidgetState extends State<ServiceControlWidget> {
 
   Future<void> _updateFrequency(int minutes) async {
     try {
-      await BackgroundService.setCollectionFrequency(minutes);
+      await BackgroundServiceController.setCollectionFrequency(minutes);
       setState(() {
         _collectionFrequencyMinutes = minutes;
       });

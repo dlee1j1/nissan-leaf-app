@@ -126,10 +126,10 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     // Configure background service based on mode
     try {
       if (_currentMode == AppMode.real) {
-        BackgroundService.startService();
+        BackgroundServiceController.startService();
       } else if (_currentMode == AppMode.debug) {
         // Stop background service to avoid conflicts with direct OBD access
-        BackgroundService.stopService();
+        BackgroundServiceController.stopService();
       }
     } on UnsupportedError catch (_) {
       // swallow the error if it's because BackgroundService

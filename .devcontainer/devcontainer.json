@@ -3,7 +3,7 @@
     "dockerComposeFile": "../docker-compose.yml",
     "service": "flutter_dev",
     "workspaceFolder": "/app",
-    "remoteUser": "1001",
+    "remoteUser": "1000",
     "customizations": {
         "vscode": {
             "extensions": [

@@ -79,8 +79,8 @@ class _MainScreenState extends State<MainScreen> {
 
   Future<void> _initializeApp() async {
     // Check if service was enabled previously
-    if (!kIsWeb && await BackgroundService.isServiceEnabled()) {
-      await BackgroundService.startService();
+    if (!kIsWeb && await BackgroundServiceController.isServiceEnabled()) {
+      await BackgroundServiceController.startService();
     }
 
     setState(() {

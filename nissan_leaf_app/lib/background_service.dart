@@ -1,84 +1,94 @@
 // lib/background_service.dart
 import 'dart:async';
+import 'dart:io';
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:simple_logger/simple_logger.dart';
 import 'mqtt_settings.dart';
 import 'mqtt_client.dart';
 import 'data_orchestrator.dart';
+import 'package:location/location.dart' as loc;
 
 // Key constants for shared preferences
 const String _serviceEnabledKey = 'background_service_enabled';
 const String _collectionFrequencyKey = 'collection_frequency_minutes';
 const int _defaultFrequency = 15; // 15 minutes default
 
-class BackgroundService {
+// Add a compile-time constant to choose the collection method
+const bool USE_LOCATION_BASED_COLLECTION = true; // Set to false to use timer-based
+const double LOCATION_DISTANCE_FILTER = 800.0; // meters (approx 0.5 miles)
+
+/// UI-side controller for managing the background service
+class BackgroundServiceController {
+  // Static reference to FlutterBackgroundService for communication
+  static var _service = FlutterBackgroundService();
   static final _log = SimpleLogger();
-  static final FlutterBackgroundService _service = FlutterBackgroundService();
-  static bool _isInitialized = false;
-  static final _orchestrator = DirectOBDOrchestrator();
-  static get orchestrator => _orchestrator;
+  static bool _isSupported = _initializeIsSupported();
 
-  /// Initialize the background service
+  // Dummy controllers for unsupported platforms
+  static final _dummyStatusController = StreamController<Map<String, dynamic>?>.broadcast();
+
+  // Platform support flag - centralized check
+  static bool _initializeIsSupported() {
+    try {
+      return Platform.isAndroid || Platform.isIOS;
+    } catch (e) {
+      // If Platform is not available (e.g., on web), assume not supported
+      return false;
+    }
+  }
+
+  @visibleForTesting
+  static setIsSupportedForTest(bool b) => _isSupported = b;
+
+  @visibleForTesting
+  static setFlutterBackgroundServiceForTest(FlutterBackgroundService service) => _service = service;
+
+  /// Initialize the service controller
   static Future<void> initialize() async {
-    if (_isInitialized) return;
-
-    // Request necessary permissions
-    await _requestPermissions();
-
-    // Initialize notifications
-    final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
-        FlutterLocalNotificationsPlugin();
-
-    // Initialize notification channel for Android
-    const AndroidNotificationChannel channel = AndroidNotificationChannel(
-      'nissan_leaf_battery_tracker',
-      'Nissan Leaf Battery Tracker Service',
-      description: 'Collects battery data in the background',
-      importance: Importance.low,
-    );
-
-    await flutterLocalNotificationsPlugin
-        .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
-        ?.createNotificationChannel(channel);
-
-    // Configure background service
-    await _service.configure(
-      androidConfiguration: AndroidConfiguration(
-        onStart: _onStart,
-        autoStart: false,
-        isForegroundMode: true,
-        notificationChannelId: 'nissan_leaf_battery_tracker',
-        initialNotificationTitle: 'Nissan Leaf Battery Tracker',
-        initialNotificationContent: 'Initializing...',
-        foregroundServiceNotificationId: 888,
-      ),
-      iosConfiguration: IosConfiguration(
-        autoStart: false,
-        onForeground: _onStart,
-        onBackground: _onIosBackground,
-      ),
-    );
-
-    // Initialize MQTT client if settings are available
-    final mqttSettings = MqttSettings();
-    await mqttSettings.loadSettings();
-    if (mqttSettings.enabled && mqttSettings.isValid()) {
-      final mqttClient = MqttClient.instance;
-      await mqttClient.initialize(mqttSettings);
-      _log.info('MQTT client initialized');
+    if (!_isSupported) {
+      _log.info('Background service not supported on this platform');
+      return;
     }
 
-    _isInitialized = true;
-    _log.info('Background service initialized');
+    try {
+      // Configure how the service will appear and behave
+      await _service.configure(
+        androidConfiguration: AndroidConfiguration(
+          onStart: backgroundServiceEntryPoint,
+          autoStart: false,
+          isForegroundMode: true,
+          notificationChannelId: 'nissan_leaf_battery_tracker',
+          initialNotificationTitle: 'Nissan Leaf Battery Tracker',
+          initialNotificationContent: 'Initializing...',
+          foregroundServiceNotificationId: 888,
+        ),
+        iosConfiguration: IosConfiguration(
+          autoStart: false,
+          onForeground: backgroundServiceEntryPoint,
+          onBackground: onIosBackground,
+        ),
+      );
+
+      // Request necessary permissions
+      await _requestPermissions();
+
+      // Initialize MQTT client if settings are available
+      final mqttSettings = MqttSettings();
+      await mqttSettings.loadSettings();
+    } catch (e) {
+      _log.severe('Error initializing background service: $e');
+      rethrow;
+    }
   }
 
   /// Request necessary permissions for the background service
   static Future<void> _requestPermissions() async {
+    if (!_isSupported) return;
+
     await Permission.notification.request();
 
     // Bluetooth permissions
@@ -90,20 +100,25 @@ class BackgroundService {
 
   /// Start the background service
   static Future<bool> startService() async {
-    if (!_isInitialized) {
-      await initialize();
-    }
-
     // Save the service state
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_serviceEnabledKey, true);
 
-    _log.info('Starting background service');
-    return await _service.startService();
+    if (_isSupported) {
+      _log.info('Starting background service');
+      return await _service.startService();
+    } else {
+      return false;
+    }
   }
 
   /// Stop the background service
   static Future<void> stopService() async {
+    if (!_isSupported) {
+      _log.info('Background service not supported on this platform');
+      return;
+    }
+
     // Save the service state
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_serviceEnabledKey, false);
@@ -114,11 +129,19 @@ class BackgroundService {
 
   /// Check if the service is running
   static Future<bool> isServiceRunning() async {
+    if (!_isSupported) {
+      return false;
+    }
+
     return await _service.isRunning();
   }
 
   /// Get the service stream for status updates
   static Stream<Map<String, dynamic>?> getStatusStream() {
+    if (!_isSupported) {
+      return _dummyStatusController.stream;
+    }
+
     return _service.on('status');
   }
 
@@ -130,6 +153,10 @@ class BackgroundService {
 
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt(_collectionFrequencyKey, minutes);
+
+    if (!_isSupported) {
+      return;
+    }
 
     // Update the running service if it's active
     if (await isServiceRunning()) {
@@ -148,72 +175,111 @@ class BackgroundService {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getBool(_serviceEnabledKey) ?? false;
   }
+
+  /// Request a manual data collection
+  static Future<void> requestManualCollection() async {
+    if (!_isSupported) {
+      _log.info('Background service not supported on this platform');
+      return;
+    }
+
+    if (await isServiceRunning()) {
+      _service.invoke('manualCollect');
+    }
+  }
 }
 
-/// iOS background handler - needed for iOS support
-@pragma('vm:entry-point')
-Future<bool> _onIosBackground(ServiceInstance service) async {
-  WidgetsFlutterBinding.ensureInitialized();
-  DartPluginRegistrant.ensureInitialized();
-  return true;
-}
+/// Background service implementation that runs in the background process
+class BackgroundService {
+  // Instance variables
+  final SimpleLogger _log = SimpleLogger();
+  final DirectOBDOrchestrator _orchestrator;
+  final ServiceInstance _service;
 
-/// Main background service function - this runs when the service starts
-@pragma('vm:entry-point')
-void _onStart(ServiceInstance service) async {
-  WidgetsFlutterBinding.ensureInitialized();
-  DartPluginRegistrant.ensureInitialized();
+  loc.Location? _locationService;
+  StreamSubscription<loc.LocationData>? _locationSubscription;
 
-  final log = SimpleLogger();
-  log.info('Background service started');
+  // Collection control fields
+  bool _keepGoing = false;
+  Duration _waitBetweenCollections = Duration(minutes: _defaultFrequency);
+  Completer<void>? _sleepCompleter;
+  Timer? _sleepTimer;
+  Duration _baseInterval = Duration(minutes: _defaultFrequency);
 
-  log.onLogged = (message, info) {
-    service.invoke('log', {'message': message});
-  };
+  /// Create a new BackgroundService
+  BackgroundService(
+    this._service, {
+    DirectOBDOrchestrator? orchestrator,
+    loc.Location? locationService,
+  })  : _orchestrator = orchestrator ?? DirectOBDOrchestrator(),
+        _locationService = locationService;
 
-  // Initialize with a reasonable default frequency
-  int collectionFrequencyMinutes = _defaultFrequency;
+  /// Set up location-based collection
+  Future<void> setupLocationBasedCollection() async {
+    try {
+      // Initialize location service
+      _locationService ??= loc.Location();
 
-  // Access shared preferences to get the collection frequency
-  final prefs = await SharedPreferences.getInstance();
-  collectionFrequencyMinutes = prefs.getInt(_collectionFrequencyKey) ?? _defaultFrequency;
+      // Check if location service is enabled
+      bool serviceEnabled = await _locationService!.serviceEnabled();
+      if (!serviceEnabled) {
+        serviceEnabled = await _locationService!.requestService();
+        if (!serviceEnabled) {
+          _log.warning('Location services not enabled');
+          return;
+        }
+      }
 
-  // Update service notification content
-  if (service is AndroidServiceInstance) {
-    service.setForegroundNotificationInfo(
-      title: 'Nissan Leaf Battery Tracker',
-      content: 'Running in background, collecting every $collectionFrequencyMinutes minutes',
-    );
+      // Check location permission
+      var permissionStatus = await _locationService!.hasPermission();
+      if (permissionStatus == loc.PermissionStatus.denied) {
+        permissionStatus = await _locationService!.requestPermission();
+        if (permissionStatus != loc.PermissionStatus.granted) {
+          _log.warning('Location permission not granted');
+          return;
+        }
+      }
+
+      // Configure location service
+      await _locationService!.changeSettings(
+          accuracy: loc.LocationAccuracy.balanced,
+          interval: 10000, // 10 seconds minimum between updates
+          distanceFilter: LOCATION_DISTANCE_FILTER);
+
+      // Start listening for location changes
+      _locationSubscription = _locationService!.onLocationChanged
+          .listen((locationData) => _onLocationChanged(locationData));
+      _log.info('Location-based collection enabled with ${LOCATION_DISTANCE_FILTER}m filter');
+    } catch (e) {
+      _log.severe('Error setting up location-based collection: $e');
+    }
   }
 
-  // Create orchestrator for data collection
-  final orchestrator = BackgroundService.orchestrator;
+  /// Handle location changes
+  void _onLocationChanged(loc.LocationData locationData) {
+    _log.info(
+        'Significant location change detected: ${locationData.latitude}, ${locationData.longitude}');
 
-  // Set up status forwarder
-  orchestrator.statusStream.listen((status) {
-    // Forward status updates to the service clients
-    service.invoke('status', status);
-  });
+    // Trigger data collection
+    collectData();
+  }
 
-  // Start periodic collection
-  // Timer? timer;
-
-  // Function to collect and store data using the orchestrator
+  /// Collection functionality
   Future<bool> collectData() async {
     try {
-      log.info('Collecting battery data');
-
+      _log.info('Collecting battery data');
       // Let the orchestrator handle the collection process
-      return orchestrator.collectData();
+      return await _orchestrator.collectData();
     } catch (e, stackTrace) {
-      log.severe('Error collecting data: $e\n$stackTrace');
-      service.invoke('status', {'error': e.toString(), 'collecting': false});
+      _log.severe('Error collecting data: $e\n$stackTrace');
+      _service.invoke('status', {'error': e.toString(), 'collecting': false});
       return false;
     }
   }
 
-  const Duration maxDelay = Duration(minutes: 5);
+  /// Calculate next sleep duration
   Duration computeNextDuration(Duration current, Duration base, bool success) {
+    const Duration maxDelay = Duration(minutes: 5);
     if (base > maxDelay) return base; // if base is large anyway, don't need to do backoff
     Duration next;
     if (success) {
@@ -224,83 +290,162 @@ void _onStart(ServiceInstance service) async {
     return next;
   }
 
-  bool keepGoing = false;
-  Duration waitBetweenCollections;
-  Completer<void>? sleepCompleter;
-  Timer? sleepTimer;
+  /// Start timer-based collection
+  Future<void> startTimerCollection(int frequencyMinutes) async {
+    if (USE_LOCATION_BASED_COLLECTION) {
+      _log.info('Using location-based collection instead of timer');
+      await setupLocationBasedCollection();
+      return;
+    }
 
-  Future<void> collectDataAndKeepGoing() async {
-    Duration base = Duration(minutes: collectionFrequencyMinutes);
-    waitBetweenCollections = base;
-    keepGoing = true;
-    while (keepGoing) {
+    _baseInterval = Duration(minutes: frequencyMinutes);
+    _waitBetweenCollections = _baseInterval;
+    _keepGoing = true;
+
+    while (_keepGoing) {
       bool success = await collectData();
-      var next = computeNextDuration(waitBetweenCollections, base, success);
-      log.info('going to sleep. waking up in ${next.inMinutes} minutes.');
-      waitBetweenCollections = next;
+      var next = computeNextDuration(_waitBetweenCollections, _baseInterval, success);
+      _log.info('Going to sleep. Waking up in ${next.inMinutes} minutes.');
+      _waitBetweenCollections = next;
 
-      // Instead of directly using Future.delayed(next), use a completer that can be completed early
-      sleepCompleter = Completer<void>();
-      sleepTimer = Timer(next, () {
-        if (!sleepCompleter!.isCompleted) {
-          sleepCompleter!.complete();
+      // Use a completer that can be completed early
+      _sleepCompleter = Completer<void>();
+      _sleepTimer = Timer(next, () {
+        if (_sleepCompleter != null && !_sleepCompleter!.isCompleted) {
+          _sleepCompleter!.complete();
         }
       });
 
       // Wait for either the timer to finish or manual interruption
-      await sleepCompleter!.future;
+      await _sleepCompleter!.future;
     }
   }
 
-  // Function to start the collection timer
-  void startCollectionTimer() {
-    // Also collect immediately when starting
-    collectDataAndKeepGoing();
+  /// Reset the collection timer
+  void kickTimer() {
+    if (_sleepCompleter != null && !_sleepCompleter!.isCompleted) {
+      _log.info('Resetting collection cycle');
+      _sleepTimer?.cancel();
+      _sleepCompleter!.complete(); // This will wake up the sleeping loop
+    }
   }
 
-  // Handle service lifecycle events
+  /// Stop timer-based collection
+  void stopTimerCollection() {
+    _keepGoing = false;
+    kickTimer(); // turn off the timer
+  }
+
+  /// Update collection frequency
+  void updateCollectionFrequency(int minutes) {
+    _baseInterval = Duration(minutes: minutes);
+    _log.info('Updated collection frequency to $minutes minutes');
+
+    // Update notification
+    if (_service is AndroidServiceInstance) {
+      _service.setForegroundNotificationInfo(
+        title: 'Nissan Leaf Battery Tracker',
+        content: 'Running in background, collecting every $minutes minutes',
+      );
+    }
+
+    // Restart timer if needed
+    if (!_keepGoing) {
+      startTimerCollection(minutes);
+    } else {
+      kickTimer();
+    }
+  }
+
+  /// Handle manual collection request
+  Future<void> handleManualCollect() async {
+    if (_keepGoing) {
+      _log.info('Resetting collection cycle due to manual collection');
+      kickTimer();
+    } else {
+      await collectData();
+    }
+  }
+
+  /// Clean up resources
+  void cleanup() {
+    _locationSubscription?.cancel();
+    _locationSubscription = null;
+    _sleepTimer?.cancel();
+    _sleepTimer = null;
+    _keepGoing = false;
+    if (_sleepCompleter != null && !_sleepCompleter!.isCompleted) {
+      _sleepCompleter!.complete();
+    }
+    _orchestrator.dispose();
+  }
+
+  @visibleForTesting
+  DirectOBDOrchestrator get orchestrator => _orchestrator;
+}
+
+/// iOS background handler - needed for iOS support
+@pragma('vm:entry-point')
+Future<bool> onIosBackground(ServiceInstance service) async {
+  WidgetsFlutterBinding.ensureInitialized();
+  DartPluginRegistrant.ensureInitialized();
+  return true;
+}
+
+/// Main service entry point - this runs when the service starts
+@pragma('vm:entry-point')
+void backgroundServiceEntryPoint(ServiceInstance service) async {
+  WidgetsFlutterBinding.ensureInitialized();
+  DartPluginRegistrant.ensureInitialized();
+
+  final log = SimpleLogger();
+  log.info('Background service started');
+
+  // Create a new background service instance
+  final backgroundService = BackgroundService(service);
+
+  // Set up logging to forward to UI
+  log.onLogged = (message, info) {
+    service.invoke('log', {'message': message});
+  };
+
+  // Get collection frequency
+  final prefs = await SharedPreferences.getInstance();
+  int frequencyMinutes = prefs.getInt(_collectionFrequencyKey) ?? _defaultFrequency;
+
+  // Update notification
+  if (service is AndroidServiceInstance) {
+    service.setForegroundNotificationInfo(
+      title: 'Nissan Leaf Battery Tracker',
+      content: 'Running in background, collecting every $frequencyMinutes minutes',
+    );
+  }
+
+  // Set up status forwarding
+  backgroundService.orchestrator.statusStream.listen((status) {
+    service.invoke('status', status);
+  });
+
+  // Set up event handlers
   service.on('stopService').listen((event) {
     log.info('Stopping background service');
-//    timer?.cancel();
-    keepGoing = false;
-    orchestrator.dispose();
+    backgroundService.stopTimerCollection();
+    backgroundService.cleanup();
     service.stopSelf();
   });
 
   service.on('updateFrequency').listen((event) {
     if (event != null && event['minutes'] != null) {
-      collectionFrequencyMinutes = event['minutes'];
-      log.info('Updated collection frequency to $collectionFrequencyMinutes minutes');
-
-      // Restart the timer with the new frequency
-//      timer?.cancel();
-      startCollectionTimer();
-
-      // Update notification
-      if (service is AndroidServiceInstance) {
-        service.setForegroundNotificationInfo(
-          title: 'Nissan Leaf Battery Tracker',
-          content: 'Running in background, collecting every $collectionFrequencyMinutes minutes',
-        );
-      }
+      backgroundService.updateCollectionFrequency(event['minutes']);
     }
   });
 
   service.on('manualCollect').listen((event) async {
-    // if we have a sleep timer that means there is something waiting to
-    // collect data - just wake it up and it will grab the data
-    // otherwise, just call collect
-    if (keepGoing && sleepCompleter != null && !sleepCompleter!.isCompleted) {
-      log.info('Resetting collection cycle due to manual collection');
-      sleepTimer?.cancel();
-      sleepCompleter!.complete(); // This will wake up the sleeping loop
-    } else {
-      await collectData();
-    }
+    await backgroundService.handleManualCollect();
   });
 
-  // Start the collection timer
-  startCollectionTimer();
+  // Start collection
+  await backgroundService.startTimerCollection(frequencyMinutes);
 
   // Keep service alive
   service.invoke('started', {});
