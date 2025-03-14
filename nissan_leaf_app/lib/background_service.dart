@@ -7,8 +7,6 @@ import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:simple_logger/simple_logger.dart';
-import 'mqtt_settings.dart';
-import 'mqtt_client.dart';
 import 'data_orchestrator.dart';
 import 'package:location/location.dart' as loc;
 
@@ -18,7 +16,9 @@ const String _collectionFrequencyKey = 'collection_frequency_minutes';
 const int _defaultFrequency = 15; // 15 minutes default
 
 // Add a compile-time constant to choose the collection method
+// ignore: constant_identifier_names
 const bool USE_LOCATION_BASED_COLLECTION = true; // Set to false to use timer-based
+// ignore: constant_identifier_names
 const double LOCATION_DISTANCE_FILTER = 800.0; // meters (approx 0.5 miles)
 
 /// UI-side controller for managing the background service
@@ -75,10 +75,6 @@ class BackgroundServiceController {
 
       // Request necessary permissions
       await _requestPermissions();
-
-      // Initialize MQTT client if settings are available
-      final mqttSettings = MqttSettings();
-      await mqttSettings.loadSettings();
     } catch (e) {
       _log.severe('Error initializing background service: $e');
       rethrow;
@@ -87,15 +83,25 @@ class BackgroundServiceController {
 
   /// Request necessary permissions for the background service
   static Future<void> _requestPermissions() async {
+    void requestUngrantedPermissions(Permission p) async {
+      PermissionStatus result = await p.status;
+      if (result != PermissionStatus.granted) result = await p.request();
+      if (result != PermissionStatus.granted) {
+        throw ("Permission not granted: $p.");
+      }
+    }
+
     if (!_isSupported) return;
 
-    await Permission.notification.request();
-
-    // Bluetooth permissions
-    await Permission.bluetooth.request();
-    await Permission.bluetoothConnect.request();
-    await Permission.bluetoothScan.request();
-    await Permission.location.request();
+    for (Permission p in [
+      Permission.notification,
+      Permission.bluetooth,
+      Permission.bluetoothConnect,
+      Permission.bluetoothScan,
+      Permission.location,
+    ]) {
+      requestUngrantedPermissions(p);
+    }
   }
 
   /// Start the background service

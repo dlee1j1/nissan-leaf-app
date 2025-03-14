@@ -78,17 +78,20 @@ void main() {
       mockCharacteristic.responseHandler = null;
     });
 
-    test('initialization sequence completes successfully', () async {
-      await controller.initialize();
-
-      expect(mockCharacteristic.writtenValues.length, 8);
-      expect(utf8.decode(mockCharacteristic.writtenValues[0]), contains('ATZ'));
+    test('initialization sequence completes successfully', () {
+      runWithFakeAsync((fake) async {
+        await controller.initialize();
+        expect(mockCharacteristic.writtenValues.length, 8);
+        expect(utf8.decode(mockCharacteristic.writtenValues[0]), contains('ATZ'));
+      });
     });
 
-    test('sendCommand handles command echo correctly', () async {
-      final response = await controller.sendCommand('0100');
-      expect(response, 'OK');
-      expect(mockCharacteristic.writtenValues.last, utf8.encode('0100\r'));
+    test('sendCommand handles command echo correctly', () {
+      runWithFakeAsync((fake) async {
+        final response = await controller.sendCommand('0100');
+        expect(response, 'OK');
+        expect(mockCharacteristic.writtenValues.last, utf8.encode('0100\r'));
+      });
     });
 
     test('sendCommand times out after 5 seconds if no response received', () {

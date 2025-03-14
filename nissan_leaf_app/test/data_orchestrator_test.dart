@@ -1,4 +1,5 @@
 // test/data_orchestrator_test.dart
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:nissan_leaf_app/data_orchestrator.dart';
@@ -9,6 +10,7 @@ import 'package:nissan_leaf_app/mqtt_client.dart';
 import 'package:nissan_leaf_app/obd/obd_command.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:nissan_leaf_app/obd/obd_connector.dart';
+import './utils/fake_async_utils.dart';
 
 // Create mock classes for dependencies
 class MockBluetoothDeviceManager extends Mock implements BluetoothDeviceManager {}
@@ -59,54 +61,56 @@ void main() {
   });
 
   group('DataOrchestrator', () {
-    test('statusStream emits collection status updates', () async {
-      // Listen to the status stream
-      final statusUpdates = <Map<String, dynamic>>[];
-      final subscription = orchestrator.statusStream.listen((status) {
-        statusUpdates.add(status);
+    test('statusStream emits collection status updates', () {
+      runWithFakeAsync((fake) async {
+        // Listen to the status stream
+        final statusUpdates = <Map<String, dynamic>>[];
+        final subscription = orchestrator.statusStream.listen((status) {
+          statusUpdates.add(status);
+        });
+
+        try {
+          // Set up mock responses
+          final carData = {
+            'state_of_charge': 85,
+            'hv_battery_health': 90,
+            'hv_battery_voltage': 360,
+            'hv_battery_Ah': 56,
+            'range_remaining': 150,
+            'timestamp': DateTime.now().millisecondsSinceEpoch,
+          };
+
+          // Mock device manager behavior - critical fix
+          when(() => mockDeviceManager.initialize()).thenAnswer((_) async {});
+          when(() => mockDeviceManager.isConnected).thenReturn(false);
+          when(() => mockDeviceManager.autoConnectToObd()).thenAnswer((_) async => true);
+          when(() => mockDeviceManager.collectCarData()).thenAnswer((_) async => carData);
+
+          // Mock database behavior
+          when(() => mockDatabase.insertReading(any())).thenAnswer((_) async => 1);
+
+          // Mock MQTT connection state
+          when(() => mockMqttClient.isConnected).thenReturn(false);
+
+          // Call the method under test
+          await orchestrator.collectData();
+
+          // Allow time for event processing
+          fake.elapse(Duration(milliseconds: 50));
+
+          // Verify statusStream emitted events
+          expect(statusUpdates, isNotEmpty);
+          expect(statusUpdates.first['collecting'], isTrue);
+          expect(statusUpdates.last['collecting'], isFalse);
+          expect(statusUpdates.last['stateOfCharge'], 85);
+
+          // Verify mock interactions
+          verify(() => mockDeviceManager.collectCarData()).called(1);
+          verify(() => mockDatabase.insertReading(any())).called(1);
+        } finally {
+          subscription.cancel();
+        }
       });
-
-      try {
-        // Set up mock responses
-        final carData = {
-          'state_of_charge': 85,
-          'hv_battery_health': 90,
-          'hv_battery_voltage': 360,
-          'hv_battery_Ah': 56,
-          'range_remaining': 150,
-          'timestamp': DateTime.now().millisecondsSinceEpoch,
-        };
-
-        // Mock device manager behavior - critical fix
-        when(() => mockDeviceManager.initialize()).thenAnswer((_) async {});
-        when(() => mockDeviceManager.isConnected).thenReturn(false);
-        when(() => mockDeviceManager.autoConnectToObd()).thenAnswer((_) async => true);
-        when(() => mockDeviceManager.collectCarData()).thenAnswer((_) async => carData);
-
-        // Mock database behavior
-        when(() => mockDatabase.insertReading(any())).thenAnswer((_) async => 1);
-
-        // Mock MQTT connection state
-        when(() => mockMqttClient.isConnected).thenReturn(false);
-
-        // Call the method under test
-        await orchestrator.collectData();
-
-        // Allow time for event processing
-        await Future.delayed(const Duration(milliseconds: 50));
-
-        // Verify statusStream emitted events
-        expect(statusUpdates, isNotEmpty);
-        expect(statusUpdates.first['collecting'], isTrue);
-        expect(statusUpdates.last['collecting'], isFalse);
-        expect(statusUpdates.last['stateOfCharge'], 85);
-
-        // Verify mock interactions
-        verify(() => mockDeviceManager.collectCarData()).called(1);
-        verify(() => mockDatabase.insertReading(any())).called(1);
-      } finally {
-        subscription.cancel();
-      }
     });
 
     test('_getOrCreateSessionId creates new session after 30+ minutes', () async {

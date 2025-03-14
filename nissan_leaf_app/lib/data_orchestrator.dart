@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:intl/intl.dart';
 import 'package:nissan_leaf_app/components/log_viewer.dart';
+import 'package:nissan_leaf_app/mqtt_settings.dart';
 import 'package:nissan_leaf_app/obd/obd_connector.dart';
 import 'package:simple_logger/simple_logger.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -83,7 +84,6 @@ class BackgroundServiceOrchestrator implements DataOrchestrator {
 
 /// Orchestrator that connects directly to OBD (Debug Mode)
 class DirectOBDOrchestrator implements DataOrchestrator {
-  // TODO: move MQTT initialization here
   final _statusController = StreamController<Map<String, dynamic>>.broadcast();
   final OBDConnector _obdConnector;
   final ReadingsDatabase _db;
@@ -94,6 +94,14 @@ class DirectOBDOrchestrator implements DataOrchestrator {
   Future<void> _initialize() async {
     if (_initialized) return;
     await _obdConnector.initialize();
+
+    final mqttSettings = MqttSettings();
+    await mqttSettings.loadSettings();
+    if (mqttSettings.enabled && mqttSettings.isValid()) {
+      await _mqttClient.initialize(mqttSettings);
+      _log.info('MQTT client initialized');
+    }
+
     _initialized = true;
   }
 
@@ -104,7 +112,7 @@ class DirectOBDOrchestrator implements DataOrchestrator {
   })  : _obdConnector = obdConnector ?? OBDConnector(),
         _db = db ?? ReadingsDatabase(),
         _mqttClient = mqttClient ?? MqttClient.instance {
-    _log.info('Created DirectOBDOrchestrator for debug mode');
+    _log.info('Created DirectOBDOrchestrator');
   }
 
   @override
@@ -122,21 +130,8 @@ class DirectOBDOrchestrator implements DataOrchestrator {
       _statusController.add({'collecting': true});
       _log.info('Starting direct OBD data collection');
 
-      // Connect if needed
-      if (!_obdConnector.isConnected) {
-        _statusController.add({'status': 'Connecting to OBD device...'});
-        _log.info('Connecting to OBD device...');
-        bool connected = await _obdConnector.autoConnectToObd();
-        if (!connected) {
-          _log.warning('Failed to connect to OBD device');
-          _statusController.add({'collecting': false, 'error': 'Failed to connect to OBD device'});
-          return false;
-        }
-      }
-
       // Collect data
       _statusController.add({'status': 'Collecting data...'});
-      _log.info('Connected, collecting car data');
       final data = await _obdConnector.collectCarData();
 
       if (data == null) {

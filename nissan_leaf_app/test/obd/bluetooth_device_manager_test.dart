@@ -195,17 +195,20 @@ void main() {
   });
 
   group('BluetoothDeviceManager Basic Functionality', () {
-    test('scanForDevices turns on Bluetooth if it is off', () async {
-      // Arrange
-      bluetoothHelper.setupBluetoothOff();
-      bluetoothHelper.setupSuccessfulScan([]);
-      when(() => bluetoothHelper.mock.turnOnBluetooth()).thenAnswer((_) async {});
+    test('scanForDevices turns on Bluetooth if it is off', () {
+      runWithFakeAsync((fake) async {
+        // Arrange
+        bluetoothHelper.setupBluetoothOff();
+        bluetoothHelper.setupSuccessfulScan([]);
+        when(() => bluetoothHelper.mock.turnOnBluetooth()).thenAnswer((_) async {});
 
-      // Act
-      await manager.scanForDevices();
+        // Act
+        await manager.scanForDevices();
+        fake.elapse(Duration(seconds: 10));
 
-      // Assert
-      bluetoothHelper.verifyBluetoothTurnedOn();
+        // Assert
+        bluetoothHelper.verifyBluetoothTurnedOn();
+      });
     });
 
     test('scanForDevices returns list of discovered devices', () async {
@@ -371,37 +374,38 @@ void main() {
     });
 
     // Simplified version of the complex error sequence test
-    test('should handle error sequences during connection attempts', () async {
+    test('should handle error sequences during connection attempts', () {
       // 1. Setup: Bluetooth is off initially
       bluetoothHelper.setupBluetoothOff();
       when(() => bluetoothHelper.mock.turnOnBluetooth()).thenAnswer((_) async {});
+      runWithFakeAsync((fake) async {
+        // Mock scan response
+        when(() => bluetoothHelper.mock.scanForDevices(
+              timeout: any(named: 'timeout'),
+              nameFilters: any(named: 'nameFilters'),
+            )).thenAnswer((_) async => [mockScanResult]);
 
-      // Mock scan response
-      when(() => bluetoothHelper.mock.scanForDevices(
-            timeout: any(named: 'timeout'),
-            nameFilters: any(named: 'nameFilters'),
-          )).thenAnswer((_) async => [mockScanResult]);
+        // Mock connection failure
+        when(() => bluetoothHelper.mock.connectToDevice(mockDevice)).thenAnswer((_) async => false);
 
-      // Mock connection failure
-      when(() => bluetoothHelper.mock.connectToDevice(mockDevice)).thenAnswer((_) async => false);
+        // Attempt auto-connect
+        final result = await manager.autoConnectToObd();
 
-      // Attempt auto-connect
-      final result = await manager.autoConnectToObd();
+        // Should fail
+        expect(result, false);
 
-      // Should fail
-      expect(result, false);
+        // Should have turned on Bluetooth
+        verify(() => bluetoothHelper.mock.turnOnBluetooth()).called(1);
 
-      // Should have turned on Bluetooth
-      verify(() => bluetoothHelper.mock.turnOnBluetooth()).called(1);
+        // Should have attempted to scan
+        verify(() => bluetoothHelper.mock.scanForDevices(
+              timeout: any(named: 'timeout'),
+              nameFilters: any(named: 'nameFilters'),
+            )).called(1);
 
-      // Should have attempted to scan
-      verify(() => bluetoothHelper.mock.scanForDevices(
-            timeout: any(named: 'timeout'),
-            nameFilters: any(named: 'nameFilters'),
-          )).called(1);
-
-      // Should have attempted to connect
-      verify(() => bluetoothHelper.mock.connectToDevice(mockDevice)).called(3);
+        // Should have attempted to connect
+        verify(() => bluetoothHelper.mock.connectToDevice(mockDevice)).called(3);
+      });
     });
   });
   group('OBDDevice Error Handling and Recovery', () {
