@@ -8,7 +8,7 @@ import 'dart:async';
 import 'pages/connection_page.dart';
 import 'pages/dashboard_page.dart';
 import 'components/log_viewer.dart';
-import 'background_service.dart';
+import 'background_service_controller.dart';
 
 // Global logger instance
 final _log = SimpleLogger();

@@ -1,5 +1,4 @@
 // test/data_orchestrator_test.dart
-import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:nissan_leaf_app/data_orchestrator.dart';

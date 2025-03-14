@@ -15,8 +15,8 @@ import '../components/battery_status_widget.dart';
 import '../components/service_control_widget.dart';
 import '../components/readings_chart_widget.dart';
 import '../data_orchestrator.dart';
-import '../background_service.dart';
 import '../components/mock_battery_selector_widget.dart';
+import '../background_service_controller.dart';
 
 /// Data orchestration modes
 enum AppMode { real, mock, debug }
