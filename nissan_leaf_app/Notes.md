@@ -85,3 +85,13 @@
       42 08 | 16904 | 16904 | 0100001000001000
       08 80 | 2176 | 2176 | 0000100010000000
       80 02 | 32770 | -32766 | 1000000000000010
+
+- 2025-03-14
+  - we have a full app. A few things to go do
+     - optimize battery life - how do we go to sleep vs check availability of the OBD connector
+     - do a full sweep 
+  - here are the list of stuff that we installed that we had to back off due to dependency hell 
+      - flutter secure storage - needs Tink that flutter doesn't provide out of the box and getting the dependencies take you to dependency hell
+      - worktmanager - base flutter depracated the shim class 
+      - flutter activity events - missing a class that base flutter got rid of
+        

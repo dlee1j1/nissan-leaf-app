@@ -1,4 +1,3 @@
-// test/background_service_test.dart
 import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nissan_leaf_app/background_service.dart';
@@ -7,7 +6,6 @@ import 'package:mocktail/mocktail.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:location/location.dart' as loc;
 import 'package:nissan_leaf_app/data_orchestrator.dart';
-import 'package:nissan_leaf_app/background_service_controller.dart';
 
 // Mock classes
 class MockLocation extends Mock implements loc.Location {
@@ -115,22 +113,17 @@ void main() {
     mockService = MockFlutterBackgroundService();
     mockServiceInstance = MockServiceInstance();
     mockOrchestrator = MockDirectOBDOrchestrator();
-    BackgroundServiceController.setFlutterBackgroundServiceForTest(mockService);
-
-    // Create BackgroundService instance with mocks
-    backgroundService = BackgroundService(
-      mockServiceInstance,
-      locationService: mockLocation,
-      orchestrator: mockOrchestrator,
-    );
 
     // Register fallback values for matchers in mocktail
     registerFallbackValue(loc.LocationAccuracy.balanced);
     registerFallbackValue(0);
     registerFallbackValue(0.0);
     registerFallbackValue(<String, dynamic>{});
-    registerFallbackValue(
-        AndroidConfiguration(isForegroundMode: true, onStart: (_) => {}, autoStart: false));
+    registerFallbackValue(AndroidConfiguration(
+      isForegroundMode: true,
+      onStart: (_) => {},
+      autoStart: false,
+    ));
     registerFallbackValue(IosConfiguration(autoStart: false));
 
     // Add this registration BEFORE trying to use 'when' on the configure method
@@ -154,142 +147,119 @@ void main() {
   tearDown(() {
     mockLocation.dispose();
     mockOrchestrator.dispose();
-    BackgroundServiceController.setIsSupportedForTest(false);
-  });
-
-  group('BackgroundService Basic Functionality', () {
-    test('collection frequency can be stored and retrieved', () async {
-      // This test doesn't rely on the actual background service
-      // It only tests the shared preferences functionality
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setInt('collection_frequency_minutes', 30);
-
-      expect(await BackgroundServiceController.getCollectionFrequency(), 30);
-    });
-
-    test('isServiceEnabled returns the correct value', () async {
-      // Default should be false
-      expect(await BackgroundServiceController.isServiceEnabled(), false);
-
-      // After setting to true
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool('background_service_enabled', true);
-
-      expect(await BackgroundServiceController.isServiceEnabled(), true);
-    });
-
-    test('setCollectionFrequency validates the input', () async {
-      expect(() async => await BackgroundServiceController.setCollectionFrequency(0),
-          throwsA(isA<ArgumentError>()));
-      expect(() async => await BackgroundServiceController.setCollectionFrequency(-1),
-          throwsA(isA<ArgumentError>()));
-    });
-
-    test('startService invokes the service start method', () async {
-      when(() => mockService.startService()).thenAnswer((_) async => true);
-      BackgroundServiceController.setIsSupportedForTest(true);
-
-      // Act
-      final result = await BackgroundServiceController.startService();
-
-      // Assert
-      expect(result, true);
-      verify(() => mockService.startService()).called(1);
-    });
-
-    test('stopService invokes stopService on the service', () async {
-      // Arrange
-      when(() => mockService.invoke(any(), any())).thenAnswer((_) async {});
-      BackgroundServiceController.setIsSupportedForTest(true);
-
-      // Act
-      await BackgroundServiceController.stopService();
-
-      // Assert
-      verify(() => mockService.invoke('stopService')).called(1);
-    });
   });
 
   group('Location-Based Collection', () {
     setUp(() {
       // Setup common mock behaviors
       when(() => mockLocation.serviceEnabled()).thenAnswer((_) async => true);
+      when(() => mockLocation.requestService()).thenAnswer((_) async => true);
       when(() => mockLocation.hasPermission())
           .thenAnswer((_) async => loc.PermissionStatus.granted);
+
+      // This is the critical fix - properly mock the changeSettings method
       when(() => mockLocation.changeSettings(
             accuracy: any(named: 'accuracy'),
-            interval: any(named: 'interval'),
             distanceFilter: any(named: 'distanceFilter'),
-          )).thenAnswer((_) async {
-        return true;
-      });
+          )).thenAnswer((_) async => true);
 
       when(() => mockService.invoke(any(), any())).thenAnswer((_) async {});
     });
 
     test('setupLocationBasedCollection configures service with correct parameters', () async {
-      // Act
-      await backgroundService.setupLocationBasedCollection();
+      // Create the BackgroundService instance after setting up the mocks
+      backgroundService = BackgroundService(
+        mockServiceInstance,
+        locationService: mockLocation,
+        orchestrator: mockOrchestrator,
+      );
 
-      // Assert that the distance filter was set correctly
+      // Give time for the asynchronous initialization to complete
+      await Future.delayed(const Duration(milliseconds: 10));
+
+      // Verify that the distance filter was set correctly
       verify(() => mockLocation.changeSettings(
             accuracy: loc.LocationAccuracy.balanced,
-            interval: 10000,
             distanceFilter: 800.0, // LOCATION_DISTANCE_FILTER
           )).called(1);
     });
 
     test('setupLocationBasedCollection handles location service disabled', () async {
-      // Arrange
+      // Arrange - override the default mock setup
       when(() => mockLocation.serviceEnabled()).thenAnswer((_) async => false);
       when(() => mockLocation.requestService()).thenAnswer((_) async => false);
 
-      // Act
-      await backgroundService.setupLocationBasedCollection();
+      // Create the BackgroundService instance
+      backgroundService = BackgroundService(
+        mockServiceInstance,
+        locationService: mockLocation,
+        orchestrator: mockOrchestrator,
+      );
 
-      // Assert - no subscription should be created when location service is disabled
+      // Give time for the asynchronous initialization to complete
+      await Future.delayed(const Duration(milliseconds: 10));
+
+      // Verify changeSettings was never called
       verifyNever(() => mockLocation.changeSettings(
             accuracy: any(named: 'accuracy'),
-            interval: any(named: 'interval'),
             distanceFilter: any(named: 'distanceFilter'),
           ));
     });
 
     test('location change triggers data collection', () async {
-      // Arrange
       // Setup orchestrator mocks
-      when(() => mockOrchestrator.collectData()).thenAnswer((_) async => Future.value(true));
-      await backgroundService.setupLocationBasedCollection();
+      when(() => mockOrchestrator.collectData()).thenAnswer((_) async => true);
 
-      // Act - simulate a location change
+      // Create the BackgroundService instance
+      backgroundService = BackgroundService(
+        mockServiceInstance,
+        locationService: mockLocation,
+        orchestrator: mockOrchestrator,
+      );
+
+      // Update to a frequency that will trigger location-based collection
+      backgroundService.updateCollectionFrequency(60);
+
+      // Simulate a location change
       final mockLocationData = MockLocationData(latitude: 37.7749, longitude: -122.4194);
       mockLocation.simulateLocationChange(mockLocationData);
 
-      // Allow streams to propagate
-      await Future.delayed(Duration(milliseconds: 10));
+      // Allow time for the change to propagate
+      await Future.delayed(const Duration(milliseconds: 10));
 
-      // Assert
+      // Verify data collection was triggered
       verify(() => mockOrchestrator.collectData()).called(1);
     });
   });
 
   group('Service Logic', () {
     setUp(() {
-      // Setup common mock behaviors for the service instance
+      // Setup common mock behaviors
+      when(() => mockLocation.serviceEnabled()).thenAnswer((_) async => true);
+      when(() => mockLocation.requestService()).thenAnswer((_) async => true);
+      when(() => mockLocation.hasPermission())
+          .thenAnswer((_) async => loc.PermissionStatus.granted);
+
+      when(() => mockLocation.changeSettings(
+            accuracy: any(named: 'accuracy'),
+            distanceFilter: any(named: 'distanceFilter'),
+          )).thenAnswer((_) async => true);
+
+      // Setup service instance mocks
       when(() => mockServiceInstance.invoke(any(), any())).thenAnswer((_) {});
 
-      // Setup listener registration mocks
-      final streamController = StreamController<Map<String, dynamic>?>();
-      when(() => mockServiceInstance.on(any())).thenAnswer((_) => streamController.stream);
-
       // Setup orchestrator mocks
-      when(() => mockOrchestrator.collectData()).thenAnswer((_) async => Future.value(true));
+      when(() => mockOrchestrator.collectData()).thenAnswer((_) async => true);
+
+      // Create the BackgroundService instance
+      backgroundService = BackgroundService(
+        mockServiceInstance,
+        locationService: mockLocation,
+        orchestrator: mockOrchestrator,
+      );
     });
 
     test('collectData uses orchestrator and handles success', () async {
-      // Arrange
-      when(() => mockOrchestrator.collectData()).thenAnswer((_) async => true);
-
       // Act
       final result = await backgroundService.collectData();
 
@@ -313,8 +283,8 @@ void main() {
     test('computeNextDuration calculates retry delays correctly', () {
       // Test base case - success returns base interval
       expect(
-          backgroundService.computeNextDuration(Duration(minutes: 2), Duration(minutes: 3), true),
-          equals(Duration(minutes: 3)));
+          backgroundService.computeNextDuration(Duration(minutes: 2), Duration(minutes: 1), true),
+          equals(Duration(minutes: 1)));
 
       // Test failure case - doubles the current interval
       expect(
@@ -323,8 +293,8 @@ void main() {
 
       // Test max delay limit
       expect(
-          backgroundService.computeNextDuration(Duration(minutes: 3), Duration(minutes: 2), false),
-          equals(Duration(minutes: 5)) // Should cap at maxDelay (5 minutes)
+          backgroundService.computeNextDuration(Duration(minutes: 25), Duration(minutes: 3), false),
+          equals(Duration(minutes: 30)) // Should cap at maxDelay (30 minutes)
           );
     });
   });

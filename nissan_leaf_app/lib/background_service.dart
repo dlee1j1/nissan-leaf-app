@@ -1,6 +1,8 @@
 // lib/background_service.dart
 import 'dart:async';
+import 'dart:io';
 import 'dart:ui';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -18,37 +20,46 @@ const bool USE_LOCATION_BASED_COLLECTION = true; // Set to false to use timer-ba
 // ignore: constant_identifier_names
 const double LOCATION_DISTANCE_FILTER = 800.0; // meters (approx 0.5 miles)
 
+enum TriggerType {
+  timer,
+  movement,
+  manual;
+}
+
 /// Background service implementation that runs in the background process
 class BackgroundService {
   // Instance variables
   final SimpleLogger _log = SimpleLogger();
-  final DirectOBDOrchestrator _orchestrator;
+  final DataOrchestrator _orchestrator;
   final ServiceInstance _service;
 
   loc.Location? _locationService;
   StreamSubscription<loc.LocationData>? _locationSubscription;
 
-  // Collection control fields
-  bool _keepGoing = false;
-  Duration _waitBetweenCollections = Duration(minutes: defaultFrequency);
-  Completer<void>? _sleepCompleter;
-  Timer? _sleepTimer;
-  Duration _baseInterval = Duration(minutes: defaultFrequency);
-
   /// Create a new BackgroundService
   BackgroundService(
     this._service, {
-    DirectOBDOrchestrator? orchestrator,
+    DataOrchestrator? orchestrator,
     loc.Location? locationService,
-  })  : _orchestrator = orchestrator ?? DirectOBDOrchestrator(),
-        _locationService = locationService;
+  }) : _orchestrator = orchestrator ?? (kIsWeb ? MockDataOrchestrator() : DirectOBDOrchestrator()) {
+    // Only set up location service if not on web
+    if (!kIsWeb) {
+      // Only use or create location service on non-web platforms
+      _locationService = locationService ?? loc.Location();
+      _setupLocationBasedCollection();
+    } else {
+      // Ensure locationService is null on web so we never try to use it
+      _locationService = null;
+    }
+  }
 
   /// Set up location-based collection
-  Future<void> setupLocationBasedCollection() async {
+  Future<void> _setupLocationBasedCollection() async {
     try {
-      // Initialize location service
-      _locationService ??= loc.Location();
-
+      if (_locationService == null) {
+        _log.warning('Location service not available');
+        return;
+      }
       // Check if location service is enabled
       bool serviceEnabled = await _locationService!.serviceEnabled();
       if (!serviceEnabled) {
@@ -61,29 +72,23 @@ class BackgroundService {
 
       // Configure location service
       await _locationService!.changeSettings(
-          accuracy: loc.LocationAccuracy.balanced,
-          interval: 10000, // 10 seconds minimum between updates
-          distanceFilter: LOCATION_DISTANCE_FILTER);
-
-      // Start listening for location changes
-      _locationSubscription = _locationService!.onLocationChanged
-          .listen((locationData) => _onLocationChanged(locationData));
-      _log.info('Location-based collection enabled with ${LOCATION_DISTANCE_FILTER}m filter');
+          accuracy: loc.LocationAccuracy.balanced, distanceFilter: LOCATION_DISTANCE_FILTER);
     } catch (e) {
       _log.severe('Error setting up location-based collection: $e');
     }
   }
 
-  /// Handle location changes
-  void _onLocationChanged(loc.LocationData locationData) {
-    _log.info(
-        'Significant location change detected: ${locationData.latitude}, ${locationData.longitude}');
-
-    // Trigger data collection
-    collectData();
-  }
+  // Collection control fields
+  Duration _waitBetweenCollections = Duration(minutes: defaultFrequency);
+  Duration _baseInterval = Duration(minutes: defaultFrequency);
+  TriggerType _lastTrigger = TriggerType.timer;
+  bool _lastCollectionSuccess = true;
+  static const Duration maxDelay = Duration(minutes: 30);
+  static const Duration maxDelayBeforeGPS = Duration(minutes: 10);
+  Timer _timer = Timer(Duration.zero, () {});
 
   /// Collection functionality
+  @visibleForTesting
   Future<bool> collectData() async {
     try {
       _log.info('Collecting battery data');
@@ -97,8 +102,8 @@ class BackgroundService {
   }
 
   /// Calculate next sleep duration
+  @visibleForTesting
   Duration computeNextDuration(Duration current, Duration base, bool success) {
-    const Duration maxDelay = Duration(minutes: 5);
     if (base > maxDelay) return base; // if base is large anyway, don't need to do backoff
     Duration next;
     if (success) {
@@ -109,55 +114,80 @@ class BackgroundService {
     return next;
   }
 
-  /// Start timer-based collection
-  Future<void> startTimerCollection(int frequencyMinutes) async {
-    if (USE_LOCATION_BASED_COLLECTION) {
-      _log.info('Using location-based collection instead of timer');
-      await setupLocationBasedCollection();
-      return;
-    }
+  /// Sets up the collection strategy using both timer and location triggers
+  /// This is called after each collection to schedule the next one
+  ///
+  /// If the last collection was manually triggered or location-based,
+  ///  reset to the base interval; otherwise calculate the next interval
+  ///  based on success/failure of the last timer-triggered collection (exponential backoff)
+  ///
+  /// If we're waiting a long time (due to backoff from failures),
+  /// also enable location-based collection on supported platforms.
+  /// This gives us a second chance to collect data if we happen to get on a vehicle that moves.
+  ///
+  /// Note that if the location based collection triggers, the reset slows down the
+  /// collection frequency to the base interval which keeps disables the location trigger for a while.
+  /// This avoids the situation where we are sitting in a moving vehicle and the OBD controller
+  /// is not available.
+  Future<void> setupActivityTracking() async {
+    try {
+      if (_lastTrigger != TriggerType.timer) {
+        _waitBetweenCollections = _baseInterval;
+      } else {
+        _waitBetweenCollections =
+            computeNextDuration(_waitBetweenCollections, _baseInterval, _lastCollectionSuccess);
+      }
 
-    _baseInterval = Duration(minutes: frequencyMinutes);
-    _waitBetweenCollections = _baseInterval;
-    _keepGoing = true;
-
-    while (_keepGoing) {
-      bool success = await collectData();
-      var next = computeNextDuration(_waitBetweenCollections, _baseInterval, success);
-      _log.info('Going to sleep. Waking up in ${next.inMinutes} minutes.');
-      _waitBetweenCollections = next;
-
-      // Use a completer that can be completed early
-      _sleepCompleter = Completer<void>();
-      _sleepTimer = Timer(next, () {
-        if (_sleepCompleter != null && !_sleepCompleter!.isCompleted) {
-          _sleepCompleter!.complete();
-        }
+      // Schedule the next collection
+      _timer = Timer(_waitBetweenCollections, () {
+        execute(TriggerType.timer);
       });
 
-      // Wait for either the timer to finish or manual interruption
-      await _sleepCompleter!.future;
+      if (_waitBetweenCollections >= maxDelayBeforeGPS && (Platform.isAndroid || Platform.isIOS)) {
+        // Start listening for location changes if we are at max wait interval
+        _locationSubscription =
+            _locationService!.onLocationChanged.listen((_) => execute(TriggerType.movement));
+        _log.info('Location-based collection enabled with ${LOCATION_DISTANCE_FILTER}m filter');
+      }
+    } catch (e) {
+      _log.severe('Error setting up activity recognition: $e');
     }
   }
 
-  /// Reset the collection timer
-  void kickTimer() {
-    if (_sleepCompleter != null && !_sleepCompleter!.isCompleted) {
-      _log.info('Resetting collection cycle');
-      _sleepTimer?.cancel();
-      _sleepCompleter!.complete(); // This will wake up the sleeping loop
+  Future<void> stop() async {
+    _timer.cancel();
+    if (_locationSubscription != null) {
+      await _locationSubscription!.cancel();
+      _locationSubscription = null;
     }
   }
 
-  /// Stop timer-based collection
-  void stopTimerCollection() {
-    _keepGoing = false;
-    kickTimer(); // turn off the timer
+  /// Main collection execution method
+  /// This is called by timer, location change, or manual triggers
+  ///
+  /// Collection Logic:
+  /// 1. Prevent multiple simultaneous collections with _executing flag
+  /// 2. Record the trigger type for future interval calculations
+  /// 3. Stop existing triggers (timer and location)
+  /// 4. Perform the actual data collection
+  /// 5. Set up the next collection cycle based on results
+  bool _executing = false;
+  Future<void> execute(TriggerType trigger) async {
+    if (_executing) return; // drop the activity if we get here multiple times
+    _executing = true;
+    _lastTrigger = trigger;
+    await stop();
+    _lastCollectionSuccess = await collectData(); // actual work
+    await setupActivityTracking();
+    _executing = false;
   }
 
   /// Update collection frequency
   void updateCollectionFrequency(int minutes) {
     _baseInterval = Duration(minutes: minutes);
+    if (_waitBetweenCollections < _baseInterval) {
+      _waitBetweenCollections = _baseInterval;
+    }
     _log.info('Updated collection frequency to $minutes minutes');
 
     // Update notification
@@ -168,39 +198,18 @@ class BackgroundService {
       );
     }
 
-    // Restart timer if needed
-    if (!_keepGoing) {
-      startTimerCollection(minutes);
-    } else {
-      kickTimer();
-    }
-  }
-
-  /// Handle manual collection request
-  Future<void> handleManualCollect() async {
-    if (_keepGoing) {
-      _log.info('Resetting collection cycle due to manual collection');
-      kickTimer();
-    } else {
-      await collectData();
-    }
+    // kick off a redo
+    execute(TriggerType.manual);
   }
 
   /// Clean up resources
   void cleanup() {
-    _locationSubscription?.cancel();
-    _locationSubscription = null;
-    _sleepTimer?.cancel();
-    _sleepTimer = null;
-    _keepGoing = false;
-    if (_sleepCompleter != null && !_sleepCompleter!.isCompleted) {
-      _sleepCompleter!.complete();
-    }
+    stop();
     _orchestrator.dispose();
   }
 
   @visibleForTesting
-  DirectOBDOrchestrator get orchestrator => _orchestrator;
+  DataOrchestrator get orchestrator => _orchestrator;
 }
 
 /// iOS background handler - needed for iOS support
@@ -248,7 +257,6 @@ void backgroundServiceEntryPoint(ServiceInstance service) async {
   // Set up event handlers
   service.on('stopService').listen((event) {
     log.info('Stopping background service');
-    backgroundService.stopTimerCollection();
     backgroundService.cleanup();
     service.stopSelf();
   });
@@ -260,11 +268,11 @@ void backgroundServiceEntryPoint(ServiceInstance service) async {
   });
 
   service.on('manualCollect').listen((event) async {
-    await backgroundService.handleManualCollect();
+    await backgroundService.execute(TriggerType.manual);
   });
 
   // Start collection
-  await backgroundService.startTimerCollection(frequencyMinutes);
+  await backgroundService.execute(TriggerType.manual);
 
   // Keep service alive
   service.invoke('started', {});

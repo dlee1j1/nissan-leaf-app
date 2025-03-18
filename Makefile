@@ -21,8 +21,8 @@ setup:
 # fix permissions to let WSL test runner to work (in addition to the container) 
 fix-permissions:
 	chmod -R go+w .
+	chmod -Rf go+w /opt/flutter/bin/cache/ || true
 	chmod -Rf go+w /opt/flutter/flutter_tools/ || true
-#	chmod -Rf go+w /root || true
 	@echo "Permissions fixed for both WSL and container access"
 
 
