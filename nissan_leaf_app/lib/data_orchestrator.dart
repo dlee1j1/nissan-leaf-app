@@ -107,6 +107,7 @@ class DirectOBDOrchestrator implements DataOrchestrator {
         'stateOfCharge': reading.stateOfCharge,
         'batteryHealth': reading.batteryHealth,
         'estimatedRange': reading.estimatedRange,
+        'timestamp': reading.timestamp.millisecondsSinceEpoch,
         'sessionId': sessionId
       });
 

@@ -34,7 +34,7 @@ class Reading {
   factory Reading.fromMap(Map<String, dynamic> map) {
     return Reading(
       id: map['id'],
-      timestamp: DateTime.fromMillisecondsSinceEpoch(map['timestamp']),
+      timestamp: DateTime.fromMillisecondsSinceEpoch(map['timestamp'] ?? DateTime.now()),
       stateOfCharge: map['stateOfCharge'] ?? 0.0,
       batteryHealth: map['batteryHealth'] ?? 0.0,
       batteryVoltage: map['batteryVoltage'] ?? 0.0,
