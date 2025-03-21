@@ -1,12 +1,10 @@
 // lib/obd/bluetooth_device_manager.dart
 import 'dart:async';
-import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:nissan_leaf_app/async_safety.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:simple_logger/simple_logger.dart';
-import 'package:permission_handler/permission_handler.dart';
 
 import 'bluetooth_service_interface.dart';
 import '../obd/obd_controller.dart';
@@ -84,33 +82,11 @@ class BluetoothDeviceManager {
 
     _log.info('Initializing BluetoothDeviceManager');
 
-    // Request necessary permissions if on a platform that needs them
-    await _requestPermissions();
-
     // Load last known device
     await _loadSavedDeviceInfo();
 
     _isInitialized = true;
     _log.info('BluetoothDeviceManager initialized');
-  }
-
-  /// Request all required permissions for Bluetooth operation
-  Future<void> _requestPermissions() async {
-    // Only request permissions on platforms that require them
-    if (Platform.isAndroid || Platform.isIOS) {
-      _log.info('Requesting Bluetooth permissions');
-      for (var permission in [
-        Permission.bluetooth,
-        Permission.bluetoothScan,
-        Permission.bluetoothConnect,
-        Permission.location,
-      ]) {
-        var isGranted = await permission.status.isGranted;
-        if (!isGranted) await permission.request();
-      }
-    } else {
-      _log.info('Current platform does not require explicit Bluetooth permissions');
-    }
   }
 
   /// Begin scanning for Bluetooth devices
