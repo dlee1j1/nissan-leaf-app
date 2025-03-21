@@ -15,9 +15,11 @@
         android:label="nissan_leaf_app"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
+        android:enableOnBackInvokedCallback="true"
         <service
-            android:name="id.flutter.flutter_background_service.BackgroundService"
+            android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
             android:foregroundServiceType="location|dataSync"
+            android:enabled="true"
         />
         <activity
             android:name=".MainActivity"
@@ -46,6 +48,7 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+        
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

@@ -1,18 +1,15 @@
-// lib/background_service.dart
+// background_service.dart - replacing with foreground task
 import 'dart:async';
 import 'dart:io';
-import 'dart:ui';
 import 'package:flutter/foundation.dart' show kIsWeb;
-import 'package:flutter/material.dart';
-import 'package:flutter_background_service/flutter_background_service.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+import 'package:location/location.dart' as loc;
+import 'package:meta/meta.dart';
 import 'package:simple_logger/simple_logger.dart';
 import 'data_orchestrator.dart';
-import 'package:location/location.dart' as loc;
 
 // Key constants for shared preferences
-const String collectionFrequencyKey = 'collection_frequency_minutes';
-const int defaultFrequency = 15; // 15 minutes default
+const int defaultFrequency = 1; // 1 minute default
 
 // Add a compile-time constant to choose the collection method
 // ignore: constant_identifier_names
@@ -26,31 +23,81 @@ enum TriggerType {
   manual;
 }
 
-/// Background service implementation that runs in the background process
-class BackgroundService {
+/// Handler that implements the background service logic
+class BackgroundService extends TaskHandler implements DataOrchestrator {
+  // Singleton instance
+  static BackgroundService? _instance;
+
   // Instance variables
   final SimpleLogger _log = SimpleLogger();
-  final DataOrchestrator _orchestrator;
-  final ServiceInstance _service;
-
+  DataOrchestrator _orchestrator;
+  final bool _createdOrchestrator;
   loc.Location? _locationService;
   StreamSubscription<loc.LocationData>? _locationSubscription;
 
-  /// Create a new BackgroundService
-  BackgroundService(
-    this._service, {
+  // Collection control fields
+  Duration _waitBetweenCollections = Duration(minutes: defaultFrequency);
+  Duration _baseInterval = Duration(minutes: defaultFrequency);
+  TriggerType _lastTrigger = TriggerType.timer;
+  bool _lastCollectionSuccess = true;
+  static const Duration maxDelay = Duration(minutes: 30);
+  static const Duration maxDelayBeforeGPS = Duration(minutes: 10);
+  Timer? _timer;
+  bool _executing = false;
+
+  /// Factory constructor that returns the singleton instance
+  factory BackgroundService({
     DataOrchestrator? orchestrator,
     loc.Location? locationService,
-  }) : _orchestrator = orchestrator ?? (kIsWeb ? MockDataOrchestrator() : DirectOBDOrchestrator()) {
+  }) {
+    _instance ??= BackgroundService._internal(
+      orchestrator: orchestrator,
+      locationService: locationService,
+    );
+    return _instance!;
+  }
+
+  @visibleForTesting
+  void setOrchestratorForTesting(DataOrchestrator orchestrator) {
+    _orchestrator = orchestrator;
+  }
+
+  /// Private constructor for singleton pattern
+  BackgroundService._internal({
+    DataOrchestrator? orchestrator,
+    loc.Location? locationService,
+  })  : _orchestrator = orchestrator ?? (kIsWeb ? MockDataOrchestrator() : DirectOBDOrchestrator()),
+        _createdOrchestrator = (orchestrator != null) {
     // Only set up location service if not on web
     if (!kIsWeb) {
       // Only use or create location service on non-web platforms
       _locationService = locationService ?? loc.Location();
-      _setupLocationBasedCollection();
     } else {
       // Ensure locationService is null on web so we never try to use it
       _locationService = null;
     }
+  }
+
+  @override
+  Stream<Map<String, dynamic>> get statusStream => _orchestrator.statusStream;
+
+  @override
+  Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
+    _log.info('Background service started - starter: ${starter.name})');
+
+    // Set up location service if on mobile
+    if (!kIsWeb) {
+      await _setupLocationBasedCollection();
+    }
+
+    // Start collection
+    await execute(TriggerType.manual);
+
+    // Update notification
+    FlutterForegroundTask.updateService(
+      notificationTitle: 'Nissan Leaf Battery Tracker',
+      notificationText: 'Collecting every ${_waitBetweenCollections.inMinutes} minutes',
+    );
   }
 
   /// Set up location-based collection
@@ -78,31 +125,14 @@ class BackgroundService {
     }
   }
 
-  // Collection control fields
-  Duration _waitBetweenCollections = Duration(minutes: defaultFrequency);
-  Duration _baseInterval = Duration(minutes: defaultFrequency);
-  TriggerType _lastTrigger = TriggerType.timer;
-  bool _lastCollectionSuccess = true;
-  static const Duration maxDelay = Duration(minutes: 30);
-  static const Duration maxDelayBeforeGPS = Duration(minutes: 10);
-  Timer _timer = Timer(Duration.zero, () {});
-
   /// Collection functionality
-  @visibleForTesting
+  @override
   Future<bool> collectData() async {
-    try {
-      _log.info('Collecting battery data');
-      // Let the orchestrator handle the collection process
-      return await _orchestrator.collectData();
-    } catch (e, stackTrace) {
-      _log.severe('Error collecting data: $e\n$stackTrace');
-      _service.invoke('status', {'error': e.toString(), 'collecting': false});
-      return false;
-    }
+    await execute(TriggerType.manual);
+    return _lastCollectionSuccess;
   }
 
   /// Calculate next sleep duration
-  @visibleForTesting
   Duration computeNextDuration(Duration current, Duration base, bool success) {
     if (base > maxDelay) return base; // if base is large anyway, don't need to do backoff
     Duration next;
@@ -115,22 +145,9 @@ class BackgroundService {
   }
 
   /// Sets up the collection strategy using both timer and location triggers
-  /// This is called after each collection to schedule the next one
-  ///
-  /// If the last collection was manually triggered or location-based,
-  ///  reset to the base interval; otherwise calculate the next interval
-  ///  based on success/failure of the last timer-triggered collection (exponential backoff)
-  ///
-  /// If we're waiting a long time (due to backoff from failures),
-  /// also enable location-based collection on supported platforms.
-  /// This gives us a second chance to collect data if we happen to get on a vehicle that moves.
-  ///
-  /// Note that if the location based collection triggers, the reset slows down the
-  /// collection frequency to the base interval which keeps disables the location trigger for a while.
-  /// This avoids the situation where we are sitting in a moving vehicle and the OBD controller
-  /// is not available.
   Future<void> setupActivityTracking() async {
     try {
+      await stop();
       if (_lastTrigger != TriggerType.timer) {
         _waitBetweenCollections = _baseInterval;
       } else {
@@ -149,35 +166,58 @@ class BackgroundService {
             _locationService!.onLocationChanged.listen((_) => execute(TriggerType.movement));
         _log.info('Location-based collection enabled with ${LOCATION_DISTANCE_FILTER}m filter');
       }
+
+      // Update notification
+      FlutterForegroundTask.updateService(
+        notificationTitle: 'Nissan Leaf Battery Tracker',
+        notificationText:
+            'Wait ${_waitBetweenCollections.inMinutes} mins. $_lastTrigger success ${_success[_lastTrigger]}/${_tries[_lastTrigger]}',
+      );
     } catch (e) {
-      _log.severe('Error setting up activity recognition: $e');
+      _log.severe('Error setting up activity tracking: $e');
     }
   }
 
   Future<void> stop() async {
-    _timer.cancel();
+    _timer?.cancel();
     if (_locationSubscription != null) {
       await _locationSubscription!.cancel();
       _locationSubscription = null;
     }
   }
 
+  // stats
+  final Map<TriggerType, int> _success = {
+    TriggerType.manual: 0,
+    TriggerType.movement: 0,
+    TriggerType.timer: 0
+  };
+  final Map<TriggerType, int> _tries = {
+    TriggerType.manual: 0,
+    TriggerType.movement: 0,
+    TriggerType.timer: 0
+  };
+  void computeStats(TriggerType trigger) {
+    int tries = _tries[trigger] ?? 0;
+    _tries[trigger] = tries + 1;
+    int success = _success[trigger] ?? 0;
+    _success[trigger] = success + (_lastCollectionSuccess ? 1 : 0);
+    _log.info("Stats:$trigger - ${_success[trigger]}/${_tries[trigger]}");
+  }
+
   /// Main collection execution method
-  /// This is called by timer, location change, or manual triggers
-  ///
-  /// Collection Logic:
-  /// 1. Prevent multiple simultaneous collections with _executing flag
-  /// 2. Record the trigger type for future interval calculations
-  /// 3. Stop existing triggers (timer and location)
-  /// 4. Perform the actual data collection
-  /// 5. Set up the next collection cycle based on results
-  bool _executing = false;
   Future<void> execute(TriggerType trigger) async {
     if (_executing) return; // drop the activity if we get here multiple times
+    _log.info("Executing based on $trigger");
     _executing = true;
     _lastTrigger = trigger;
     await stop();
-    _lastCollectionSuccess = await collectData(); // actual work
+    // actual work
+    _lastCollectionSuccess = await _orchestrator.collectData().onError((e, stackTrace) {
+      _log.severe('Error collecting data: $e\n$stackTrace');
+      return false;
+    });
+    computeStats(trigger);
     await setupActivityTracking();
     _executing = false;
   }
@@ -191,89 +231,34 @@ class BackgroundService {
     _log.info('Updated collection frequency to $minutes minutes');
 
     // Update notification
-    if (_service is AndroidServiceInstance) {
-      _service.setForegroundNotificationInfo(
-        title: 'Nissan Leaf Battery Tracker',
-        content: 'Running in background, collecting every $minutes minutes',
-      );
-    }
+    FlutterForegroundTask.updateService(
+      notificationTitle: 'Nissan Leaf Battery Tracker',
+      notificationText: 'Running in background, collecting every $minutes minutes',
+    );
 
-    // kick off a redo
+    // Kick off a new collection
     execute(TriggerType.manual);
   }
 
-  /// Clean up resources
-  void cleanup() {
-    stop();
-    _orchestrator.dispose();
+  int _calls = 0;
+  @override
+  Future<void> onRepeatEvent(DateTime timestamp) async {
+    // This is called periodically by the foreground task framework
+    // We're using our own timer for more precise control
+    _calls++;
+    _log.info("Repeated event: $_calls");
   }
 
-  @visibleForTesting
-  DataOrchestrator get orchestrator => _orchestrator;
-}
-
-/// iOS background handler - needed for iOS support
-@pragma('vm:entry-point')
-Future<bool> onIosBackground(ServiceInstance service) async {
-  WidgetsFlutterBinding.ensureInitialized();
-  DartPluginRegistrant.ensureInitialized();
-  return true;
-}
-
-/// Main service entry point - this runs when the service starts
-@pragma('vm:entry-point')
-void backgroundServiceEntryPoint(ServiceInstance service) async {
-  WidgetsFlutterBinding.ensureInitialized();
-  DartPluginRegistrant.ensureInitialized();
-
-  final log = SimpleLogger();
-  log.info('Background service started');
-
-  // Create a new background service instance
-  final backgroundService = BackgroundService(service);
-
-  // Set up logging to forward to UI
-  log.onLogged = (message, info) {
-    service.invoke('log', {'message': message});
-  };
-
-  // Get collection frequency
-  final prefs = await SharedPreferences.getInstance();
-  int frequencyMinutes = prefs.getInt(collectionFrequencyKey) ?? defaultFrequency;
-
-  // Update notification
-  if (service is AndroidServiceInstance) {
-    service.setForegroundNotificationInfo(
-      title: 'Nissan Leaf Battery Tracker',
-      content: 'Running in background, collecting every $frequencyMinutes minutes',
-    );
+  @override
+  void dispose() {
+    stop().then((_) {
+      if (_createdOrchestrator) _orchestrator.dispose();
+    });
   }
 
-  // Set up status forwarding
-  backgroundService.orchestrator.statusStream.listen((status) {
-    service.invoke('status', status);
-  });
-
-  // Set up event handlers
-  service.on('stopService').listen((event) {
-    log.info('Stopping background service');
-    backgroundService.cleanup();
-    service.stopSelf();
-  });
-
-  service.on('updateFrequency').listen((event) {
-    if (event != null && event['minutes'] != null) {
-      backgroundService.updateCollectionFrequency(event['minutes']);
-    }
-  });
-
-  service.on('manualCollect').listen((event) async {
-    await backgroundService.execute(TriggerType.manual);
-  });
-
-  // Start collection
-  await backgroundService.execute(TriggerType.manual);
-
-  // Keep service alive
-  service.invoke('started', {});
+  @override
+  Future<void> onDestroy(DateTime timestamp) async {
+    _log.info('Background service being destroyed');
+    dispose();
+  }
 }

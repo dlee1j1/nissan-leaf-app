@@ -89,7 +89,12 @@ docker-build: .docker-build-stamp
 	docker-compose exec -T flutter_dev make setup
 	touch .docker-build-stamp
 
-docker-shell: docker-build
+docker-adb: 
+	powershell.exe -File setup-android-debugging.ps1
+	sleep 2
+	docker-compose up -d && docker-compose exec make check-adb
+
+docker-shell: docker-build 
 	powershell.exe -File setup-android-debugging.ps1
 	sleep 2
 	docker-compose up -d && docker-compose exec flutter_dev bash

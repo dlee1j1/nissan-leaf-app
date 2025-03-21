@@ -1,8 +1,6 @@
 // lib/data_orchestrator.dart
 import 'dart:async';
-import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:intl/intl.dart';
-import 'package:nissan_leaf_app/components/log_viewer.dart';
 import 'package:nissan_leaf_app/mqtt_settings.dart';
 import 'package:nissan_leaf_app/obd/obd_connector.dart';
 import 'package:simple_logger/simple_logger.dart';
@@ -18,68 +16,6 @@ abstract class DataOrchestrator {
   Stream<Map<String, dynamic>> get statusStream;
   Future<bool> collectData();
   void dispose();
-}
-
-/// Orchestrator that uses background service (Real Mode)
-class BackgroundServiceOrchestrator implements DataOrchestrator {
-  final _statusController = StreamController<Map<String, dynamic>>.broadcast();
-  StreamSubscription? _serviceSubscription;
-  final _log = SimpleLogger();
-  final FlutterBackgroundService _flutterBackgroundService;
-
-  BackgroundServiceOrchestrator({FlutterBackgroundService? flutterBackgroundService})
-      : _flutterBackgroundService = flutterBackgroundService ?? FlutterBackgroundService() {
-    _serviceSubscription = _flutterBackgroundService.on('status').listen((status) {
-      if (status != null) {
-        _statusController.add(status);
-      }
-    });
-    _setupListener();
-    _log.info('Created BackgroundServiceOrchestrator');
-  }
-
-  void _setupListener() {
-    _flutterBackgroundService.on('log').listen((log) {
-      if (log != null && log['message'] != null) {
-        LogViewer.addLogFromService(log['message']);
-      }
-    });
-  }
-
-  @override
-  Stream<Map<String, dynamic>> get statusStream => _statusController.stream;
-
-  @override
-  Future<bool> collectData() async {
-    _log.info('Requesting data collection from background service');
-
-    // Request collection from background service
-    _flutterBackgroundService.invoke('manualCollect');
-
-    // Wait for completion
-    final completer = Completer<bool>();
-    StreamSubscription? subscription;
-
-    subscription = statusStream.listen((status) {
-      if (status['collecting'] == false) {
-        final success = !status.containsKey('error');
-        completer.complete(success);
-        subscription?.cancel();
-      }
-    });
-
-    return completer.future.timeout(Duration(seconds: 30), onTimeout: () {
-      _log.warning('Timeout waiting for background service response');
-      subscription?.cancel();
-      return false;
-    });
-  }
-
-  @override
-  void dispose() {
-    _serviceSubscription?.cancel();
-    _statusController.close();
-  }
 }
 
 /// Orchestrator that connects directly to OBD (Debug Mode)
@@ -246,7 +182,7 @@ class MockDataOrchestrator implements DataOrchestrator {
       'stateOfCharge': reading.stateOfCharge,
       'batteryHealth': reading.batteryHealth,
       'estimatedRange': reading.estimatedRange,
-      'lastCollection': DateTime.now().toIso8601String(),
+      'timestamp': DateTime.now().microsecondsSinceEpoch,
     });
 
     return true;
@@ -255,47 +191,5 @@ class MockDataOrchestrator implements DataOrchestrator {
   @override
   void dispose() {
     _statusController.close();
-  }
-}
-
-/// Singleton for backward compatibility
-/// This provides compatibility for existing code that uses DataOrchestrator.instance
-class DataOrchestratorLegacy implements DataOrchestrator {
-  // Singleton pattern
-  static final DataOrchestratorLegacy _instance = DataOrchestratorLegacy._internal();
-  static DataOrchestratorLegacy get instance => _instance;
-
-  // Current orchestrator
-  late DataOrchestrator _delegate;
-  final SingleFlight<bool> _collectDataGuard = SingleFlight<bool>();
-  final _log = SimpleLogger();
-
-  // Private constructor
-  DataOrchestratorLegacy._internal() {
-    _delegate = DirectOBDOrchestrator();
-    _log.info('Created DataOrchestratorLegacy singleton');
-  }
-
-  // Set the active orchestrator implementation
-  void setOrchestrator(DataOrchestrator orchestrator) {
-    if (_delegate != orchestrator) {
-      _log.info('Switching orchestrator implementation');
-      _delegate.dispose();
-      _delegate = orchestrator;
-    }
-  }
-
-  // Implementation via delegation
-  @override
-  Stream<Map<String, dynamic>> get statusStream => _delegate.statusStream;
-
-  @override
-  Future<bool> collectData({bool useMockMode = false}) {
-    return _collectDataGuard.run(() => _delegate.collectData());
-  }
-
-  @override
-  void dispose() {
-    _delegate.dispose();
   }
 }

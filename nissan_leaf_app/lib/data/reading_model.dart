@@ -35,11 +35,11 @@ class Reading {
     return Reading(
       id: map['id'],
       timestamp: DateTime.fromMillisecondsSinceEpoch(map['timestamp']),
-      stateOfCharge: map['stateOfCharge'],
-      batteryHealth: map['batteryHealth'],
-      batteryVoltage: map['batteryVoltage'],
-      batteryCapacity: map['batteryCapacity'],
-      estimatedRange: map['estimatedRange'],
+      stateOfCharge: map['stateOfCharge'] ?? 0.0,
+      batteryHealth: map['batteryHealth'] ?? 0.0,
+      batteryVoltage: map['batteryVoltage'] ?? 0.0,
+      batteryCapacity: map['batteryCapacity'] ?? 0.0,
+      estimatedRange: map['estimatedRange'] ?? 0.0,
     );
   }
 

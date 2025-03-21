@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:nissan_leaf_app/background_service.dart';
 import 'package:nissan_leaf_app/components/log_viewer.dart';
 import 'package:nissan_leaf_app/mqtt_client.dart';
 import 'package:nissan_leaf_app/obd/connection_status.dart';
@@ -12,14 +13,12 @@ import '../data/reading_model.dart';
 import '../data/readings_db.dart';
 import '../obd/bluetooth_device_manager.dart';
 import '../components/battery_status_widget.dart';
-import '../components/service_control_widget.dart';
 import '../components/readings_chart_widget.dart';
 import '../data_orchestrator.dart';
 import '../components/mock_battery_selector_widget.dart';
-import '../background_service_controller.dart';
 
 /// Data orchestration modes
-enum AppMode { real, mock, debug }
+enum AppMode { real, mock }
 
 class DataOrchestratorFactory {
   // Cache of orchestrators
@@ -35,10 +34,7 @@ class DataOrchestratorFactory {
     DataOrchestrator orchestrator;
     switch (mode) {
       case AppMode.real:
-        orchestrator = BackgroundServiceOrchestrator();
-        break;
-      case AppMode.debug:
-        orchestrator = DirectOBDOrchestrator();
+        orchestrator = BackgroundService();
         break;
       case AppMode.mock:
         orchestrator = MockDataOrchestrator();
@@ -68,7 +64,6 @@ class DashboardPage extends StatefulWidget {
 class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserver {
   final ReadingsDatabase _db = ReadingsDatabase();
   final BluetoothDeviceManager _deviceManager = BluetoothDeviceManager.instance;
-  final _logger = SimpleLogger();
 
   // Orchestration mode
   AppMode _currentMode = AppMode.real;
@@ -119,22 +114,6 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     _setupConnectionListener();
     _setupMqttListener();
     _initializeData();
-    _setupBackgroundService();
-  }
-
-  void _setupBackgroundService() {
-    // Configure background service based on mode
-    try {
-      if (_currentMode == AppMode.real) {
-        BackgroundServiceController.startService();
-      } else if (_currentMode == AppMode.debug) {
-        // Stop background service to avoid conflicts with direct OBD access
-        BackgroundServiceController.stopService();
-      }
-    } on UnsupportedError catch (_) {
-      // swallow the error if it's because BackgroundService
-      _logger.info("Background Service unsupported on this platform");
-    }
   }
 
   void _setupOrchestrator() {
@@ -162,7 +141,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
         if (status.containsKey('collecting') &&
             status['collecting'] == false &&
             !status.containsKey('error')) {
-          _loadHistoricalData();
+          // _loadHistoricalData();
           _updateCurrentReadingFromStatus(status);
         }
       });
@@ -175,7 +154,6 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     setState(() {
       _currentMode = mode;
       _setupOrchestrator();
-      _setupBackgroundService();
 
       // Clear any error messages when switching modes
       _errorMessage = null;
@@ -213,21 +191,35 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     _isMqttConnected = mqttClient.isConnected;
   }
 
+  final _log = SimpleLogger();
   void _updateCurrentReadingFromStatus(Map<String, dynamic> status) {
     // Try to get latest reading from db first
-    _db.getMostRecentReading().then((latestReading) {
+    Reading? mostRecentReading = Reading.fromMap(status);
+
+    _db.getMostRecentReading().then((latestDbReading) {
+      // Determine the most recent reading (outside setState)
+      if (latestDbReading != null &&
+          (mostRecentReading == null ||
+              latestDbReading.timestamp.isAfter(mostRecentReading!.timestamp))) {
+        mostRecentReading = latestDbReading;
+      }
+
+      // Decide whether to add to readings list (outside setState)
+      bool shouldAddToList = mostRecentReading != null &&
+          (_readings.isEmpty || mostRecentReading!.timestamp.isAfter(_readings.last.timestamp));
+
+      // Now update the state with the results of our logic
       setState(() {
-        _currentReading = latestReading;
+        _currentReading = mostRecentReading;
         _isLoadingCurrent = false;
 
-        // If we got a new reading, add it to the list
-        if (latestReading != null &&
-            (_readings.isEmpty || latestReading.timestamp.isAfter(_readings.last.timestamp))) {
-          _readings.add(latestReading);
+        // Add to readings if needed
+        if (shouldAddToList) {
+          _readings.add(mostRecentReading!);
           _readings.sort((a, b) => a.timestamp.compareTo(b.timestamp));
         }
-      });
-    });
+      }); // setState
+    }); // db.getMostRecentReading.then
   }
 
   Future<void> _initializeData() async {
@@ -236,6 +228,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   }
 
   Future<void> _loadHistoricalData() async {
+    _log.info("Loading historical data");
     try {
       setState(() {
         _isLoadingHistory = true;
@@ -273,6 +266,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       });
 
       // Use the current orchestrator for collection
+      // kinda a hack here but
       await _orchestrator.collectData();
 
       // Status updates will be handled by the orchestrator status listener
@@ -390,17 +384,6 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                         : null,
                   ),
                 ),
-                PopupMenuItem(
-                  value: AppMode.debug,
-                  child: ListTile(
-                    leading: const Icon(Icons.bug_report),
-                    title: const Text('Debug Mode'),
-                    subtitle: const Text('Direct OBD access'),
-                    trailing: _currentMode == AppMode.debug
-                        ? const Icon(Icons.check, color: Colors.green)
-                        : null,
-                  ),
-                ),
               ],
             ),
 
@@ -470,17 +453,6 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                           : null,
                     ),
                   ),
-                  PopupMenuItem(
-                    value: AppMode.debug,
-                    child: ListTile(
-                      leading: const Icon(Icons.bug_report),
-                      title: const Text('Debug Mode'),
-                      subtitle: const Text('Direct OBD access'),
-                      trailing: _currentMode == AppMode.debug
-                          ? const Icon(Icons.check, color: Colors.green)
-                          : null,
-                    ),
-                  ),
                 ],
                 child: Padding(
                   padding: const EdgeInsets.only(bottom: 8.0),
@@ -520,40 +492,6 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
               ),
 
               const SizedBox(height: 16),
-
-              // Background service control (only in real mode)
-              // TODO: write test that this widget doesn't show in kWeb mode
-              if (_currentMode == AppMode.real) const ServiceControlWidget(),
-
-              // Debug mode notice
-              if (_currentMode == AppMode.debug)
-                Card(
-                  color: Colors.blue[50],
-                  child: Padding(
-                    padding: const EdgeInsets.all(16.0),
-                    child: Row(
-                      children: [
-                        Icon(Icons.bug_report, color: Colors.blue),
-                        SizedBox(width: 8),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Debug Mode Active',
-                                style: TextStyle(fontWeight: FontWeight.bold),
-                              ),
-                              Text(
-                                'Using direct OBD connection. Background service is disabled.',
-                                style: TextStyle(fontSize: 12),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
 
               // Log viewer
               SizedBox(

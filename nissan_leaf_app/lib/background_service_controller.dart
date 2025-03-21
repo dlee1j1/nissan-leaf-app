@@ -1,30 +1,102 @@
+// background_service_controller.dart - replacing with foreground task
 import 'dart:async';
 import 'dart:io';
-import 'package:flutter/material.dart';
-import 'package:flutter_background_service/flutter_background_service.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:simple_logger/simple_logger.dart';
 import 'package:location/location.dart' as loc;
 import 'background_service.dart';
 
-// Key constants for shared preferences
-const String _serviceEnabledKey = 'background_service_enabled';
+/// Wrapper class for FlutterForegroundTask static methods to make testing easier
+class ForegroundTaskWrapper {
+  /// Initialize the foreground task
+  Future<void> init({
+    required AndroidNotificationOptions androidNotificationOptions,
+    required IOSNotificationOptions iosNotificationOptions,
+    required ForegroundTaskOptions foregroundTaskOptions,
+  }) async {
+    FlutterForegroundTask.init(
+      androidNotificationOptions: androidNotificationOptions,
+      iosNotificationOptions: iosNotificationOptions,
+      foregroundTaskOptions: foregroundTaskOptions,
+    );
+  }
+
+  /// Start the foreground service
+  Future<void> startService({
+    required String notificationTitle,
+    required String notificationText,
+    required Function callback,
+  }) async {
+    await FlutterForegroundTask.startService(
+      notificationTitle: notificationTitle,
+      notificationText: notificationText,
+      callback: callback,
+    );
+  }
+
+  /// Stop the foreground service
+  Future<void> stopService() async {
+    await FlutterForegroundTask.stopService();
+  }
+
+  /// Check if the service is running
+  Future<bool> get isRunningService async {
+    return await FlutterForegroundTask.isRunningService;
+  }
+
+  /// Check notification permission
+  Future<NotificationPermission> checkNotificationPermission() async {
+    return await FlutterForegroundTask.checkNotificationPermission();
+  }
+
+  /// Request notification permission
+  Future<NotificationPermission> requestNotificationPermission() async {
+    return await FlutterForegroundTask.requestNotificationPermission();
+  }
+
+  /// Check if ignoring battery optimizations
+  Future<bool> get isIgnoringBatteryOptimizations async {
+    return await FlutterForegroundTask.isIgnoringBatteryOptimizations;
+  }
+
+  /// Request ignore battery optimization
+  Future<void> requestIgnoreBatteryOptimization() async {
+    await FlutterForegroundTask.requestIgnoreBatteryOptimization();
+  }
+
+  /// Update service notification
+  Future<void> updateService({
+    String? notificationTitle,
+    String? notificationText,
+  }) async {
+    await FlutterForegroundTask.updateService(
+      notificationTitle: notificationTitle,
+      notificationText: notificationText,
+    );
+  }
+}
+
+/// Main entry point for the foreground task
+@pragma('vm:entry-point')
+void backgroundServiceEntryPoint() {
+  // Initialize the task handler
+  SimpleLogger().info("BackgroundServiceEntryPoint called!!!");
+  FlutterForegroundTask.setTaskHandler(BackgroundService());
+}
 
 /// UI-side controller for managing the background service
+/// Now implemented using foreground_task plugin
 class BackgroundServiceController {
-  // Static reference to FlutterBackgroundService for communication
-  static var _service = FlutterBackgroundService();
   static final _log = SimpleLogger();
   static bool _isSupported = _initializeIsSupported();
-
-  // Dummy controllers for unsupported platforms
-  static final _dummyStatusController = StreamController<Map<String, dynamic>?>.broadcast();
+  static ForegroundTaskWrapper _foregroundTask = ForegroundTaskWrapper();
 
   // Platform support flag - centralized check
   static bool _initializeIsSupported() {
     try {
-      return Platform.isAndroid || Platform.isIOS;
+      return !kIsWeb && (Platform.isAndroid || Platform.isIOS);
     } catch (e) {
       // If Platform is not available (e.g., on web), assume not supported
       return false;
@@ -35,7 +107,7 @@ class BackgroundServiceController {
   static setIsSupportedForTest(bool b) => _isSupported = b;
 
   @visibleForTesting
-  static setFlutterBackgroundServiceForTest(FlutterBackgroundService service) => _service = service;
+  static setForegroundTaskForTest(ForegroundTaskWrapper mock) => _foregroundTask = mock;
 
   /// Initialize the service controller
   static Future<void> initialize() async {
@@ -43,25 +115,27 @@ class BackgroundServiceController {
       _log.info('Background service not supported on this platform');
       return;
     }
-
     try {
-      // Configure how the service will appear and behave
-      await _service.configure(
-        androidConfiguration: AndroidConfiguration(
-          onStart: backgroundServiceEntryPoint,
-          autoStart: false,
-          isForegroundMode: true,
-          notificationChannelId: 'nissan_leaf_battery_tracker',
-          initialNotificationTitle: 'Nissan Leaf Battery Tracker',
-          initialNotificationContent: 'Initializing...',
-          foregroundServiceNotificationId: 888,
+      // Initialize the foreground task
+      await _foregroundTask.init(
+        androidNotificationOptions: AndroidNotificationOptions(
+          channelId: 'nissan_leaf_battery_tracker',
+          channelName: 'Nissan Leaf Battery Tracker',
+          channelDescription: 'Monitoring battery status',
+          channelImportance: NotificationChannelImportance.LOW,
+          priority: NotificationPriority.LOW,
         ),
-        iosConfiguration: IosConfiguration(
-          autoStart: false,
-          onForeground: backgroundServiceEntryPoint,
-          onBackground: onIosBackground,
+        iosNotificationOptions: const IOSNotificationOptions(
+          showNotification: true,
+          playSound: false,
+        ),
+        foregroundTaskOptions: ForegroundTaskOptions(
+          eventAction: ForegroundTaskEventAction.repeat(60 * 1000),
+          autoRunOnBoot: true,
+          allowWifiLock: false,
         ),
       );
+      _log.info("successfully initialized foreground system");
 
       // Request necessary permissions
       await _requestPermissions();
@@ -73,24 +147,22 @@ class BackgroundServiceController {
 
   /// Request necessary permissions for the background service
   static Future<void> _requestPermissions() async {
-    void requestUngrantedPermissions(Permission p) async {
-      PermissionStatus result = await p.status;
-      if (result != PermissionStatus.granted) result = await p.request();
-      if (result != PermissionStatus.granted) {
-        throw ("Permission not granted: $p.");
-      }
-    }
-
     if (!_isSupported) return;
 
-    for (Permission p in [
+    // Handle permissions using permission_handler
+    final permissions = [
       Permission.notification,
       Permission.bluetooth,
       Permission.bluetoothConnect,
       Permission.bluetoothScan,
       Permission.location,
-    ]) {
-      requestUngrantedPermissions(p);
+    ];
+
+    for (final permission in permissions) {
+      final status = await permission.status;
+      if (status != PermissionStatus.granted) {
+        await permission.request();
+      }
     }
 
     // Check location permission
@@ -98,21 +170,38 @@ class BackgroundServiceController {
     var permissionStatus = await locationService.hasPermission();
     if (permissionStatus == loc.PermissionStatus.denied) {
       permissionStatus = await locationService.requestPermission();
-      if (permissionStatus != loc.PermissionStatus.granted) {
-        throw ('Location permission not granted');
+    }
+
+    // Android 13+, you need to allow notification permission to display foreground service notification.
+    //
+    // iOS: If you need notification, ask for permission.
+    final NotificationPermission notificationPermission =
+        await _foregroundTask.checkNotificationPermission();
+    if (notificationPermission != NotificationPermission.granted) {
+      await _foregroundTask.requestNotificationPermission();
+    }
+
+    if (Platform.isAndroid) {
+      // Android 12+, there are restrictions on starting a foreground service.
+      //
+      // To restart the service on device reboot or unexpected problem, you need to allow below permission.
+      if (!await _foregroundTask.isIgnoringBatteryOptimizations) {
+        // This function requires `android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` permission.
+        await _foregroundTask.requestIgnoreBatteryOptimization();
       }
     }
   }
 
   /// Start the background service
   static Future<bool> startService() async {
-    // Save the service state
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_serviceEnabledKey, true);
-
     if (_isSupported) {
       _log.info('Starting background service');
-      return await _service.startService();
+      await _foregroundTask.startService(
+        notificationTitle: 'Nissan Leaf Battery Tracker',
+        notificationText: 'Monitoring battery status',
+        callback: backgroundServiceEntryPoint,
+      );
+      return true;
     } else {
       return false;
     }
@@ -125,12 +214,8 @@ class BackgroundServiceController {
       return;
     }
 
-    // Save the service state
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_serviceEnabledKey, false);
-
     _log.info('Stopping background service');
-    _service.invoke('stopService');
+    await _foregroundTask.stopService();
   }
 
   /// Check if the service is running
@@ -139,58 +224,6 @@ class BackgroundServiceController {
       return false;
     }
 
-    return await _service.isRunning();
-  }
-
-  /// Get the service stream for status updates
-  static Stream<Map<String, dynamic>?> getStatusStream() {
-    if (!_isSupported) {
-      return _dummyStatusController.stream;
-    }
-
-    return _service.on('status');
-  }
-
-  /// Set the data collection frequency in minutes
-  static Future<void> setCollectionFrequency(int minutes) async {
-    if (minutes < 1) {
-      throw ArgumentError('Collection frequency must be at least 1 minute');
-    }
-
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt(collectionFrequencyKey, minutes);
-
-    if (!_isSupported) {
-      return;
-    }
-
-    // Update the running service if it's active
-    if (await isServiceRunning()) {
-      _service.invoke('updateFrequency', {'minutes': minutes});
-    }
-  }
-
-  /// Get the data collection frequency in minutes
-  static Future<int> getCollectionFrequency() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getInt(collectionFrequencyKey) ?? defaultFrequency;
-  }
-
-  /// Check if the service is set to auto-start
-  static Future<bool> isServiceEnabled() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getBool(_serviceEnabledKey) ?? false;
-  }
-
-  /// Request a manual data collection
-  static Future<void> requestManualCollection() async {
-    if (!_isSupported) {
-      _log.info('Background service not supported on this platform');
-      return;
-    }
-
-    if (await isServiceRunning()) {
-      _service.invoke('manualCollect');
-    }
+    return await _foregroundTask.isRunningService;
   }
 }

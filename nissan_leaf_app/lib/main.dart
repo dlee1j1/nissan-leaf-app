@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:nissan_leaf_app/components/mqtt_settings_widget.dart';
 import 'package:simple_logger/simple_logger.dart';
 import 'dart:async';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 
 import 'pages/connection_page.dart';
 import 'pages/dashboard_page.dart';
@@ -14,6 +15,9 @@ import 'background_service_controller.dart';
 final _log = SimpleLogger();
 
 void main() {
+  // This needs to be called before anything else
+  WidgetsFlutterBinding.ensureInitialized();
+
   _log.onLogged = (log, info) {
     // Capture logs for UI here
     LogViewer.log(log);
@@ -74,12 +78,19 @@ class _MainScreenState extends State<MainScreen> {
   @override
   void initState() {
     super.initState();
-    _initializeApp();
+
+    // Then mark as ready to start after the first frame is rendered
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _initializeApp();
+    });
   }
 
   Future<void> _initializeApp() async {
     // Check if service was enabled previously
-    if (!kIsWeb && await BackgroundServiceController.isServiceEnabled()) {
+    if (!kIsWeb) {
+      await BackgroundServiceController.initialize();
+         // Initialize the communication port for foreground task
+      FlutterForegroundTask.initCommunicationPort();
       await BackgroundServiceController.startService();
     }
 
@@ -106,6 +117,8 @@ class _MainScreenState extends State<MainScreen> {
     }
 
     // Once initialized, show the dashboard
-    return const DashboardPage();
+    return WithForegroundTask(
+      child: const DashboardPage(),
+    );
   }
 }
