@@ -17,6 +17,12 @@
 /// }
 /// ```
 ///
+/// alternatively, using the convenience helper
+///
+/// ```dart
+///   final autoConnectToObd = _autoConnectToObd.SingleFlightGuarded;
+/// ```
+///
 /// In this example, if `autoConnectToObd()` is called multiple times while an instance
 /// is already running, all callers will share the same Future rather than invoking
 /// `_autoConnectToObd()` multiple times.
@@ -33,5 +39,18 @@ class SingleFlight<T> {
       _inFlight = null; // Allow subsequent calls once the current one finishes.
     });
     return _inFlight!;
+  }
+}
+
+/// Convenience method to use SingleFlight
+/// Usage - final autoConnectToObd = _autoConnectToObd.SingleFlightGuarded;
+extension SingleFlightExtension<T> on Future<T> Function() {
+  // ignore: non_constant_identifier_names
+  Future<T> Function() get SingleFlightGuarded {
+    final guard = SingleFlight<T>();
+    // note that this returns a specific instance of guard.run which means
+    //  we are using the same instance each
+    //  time the return'd function is called.
+    return () => guard.run(this);
   }
 }

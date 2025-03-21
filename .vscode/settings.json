@@ -37,7 +37,7 @@
         }
     },
     "terminal.integrated.defaultProfile.windows": "PowerShell",
-    "terminal.integrated.defaultProfile.linux": "bash",
+    //    "terminal.integrated.defaultProfile.linux": "sh",
     // Optional file association
     "files.associations": {
         "*.dart": "dart"
