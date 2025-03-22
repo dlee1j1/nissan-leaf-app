@@ -94,4 +94,8 @@
       - flutter secure storage - needs Tink that flutter doesn't provide out of the box and getting the dependencies take you to dependency hell
       - worktmanager - base flutter depracated the shim class 
       - flutter activity events - missing a class that base flutter got rid of
+
+-2025-03-21
+    - flutter_background was a pain in the butt due to the isolates and what you could and could not do there. Fortunately, flutter_foreground_service is much easier to use and leverages notifications to work. 
+    - Took forever to move over though because I didn't realize that android manifest file had to match the package name (the error message as not obvious). Even various AI's didn't catch the discrepancy.   
         
