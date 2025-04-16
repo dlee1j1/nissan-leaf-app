@@ -13,9 +13,7 @@ const int defaultFrequency = 1; // 1 minute default
 
 // Add a compile-time constant to choose the collection method
 // ignore: constant_identifier_names
-const bool USE_LOCATION_BASED_COLLECTION = true; // Set to false to use timer-based
-// ignore: constant_identifier_names
-const double LOCATION_DISTANCE_FILTER = 800.0; // meters (approx 0.5 miles)
+const double LOCATION_DISTANCE_FILTER = 1600.0; // meters (approx 1 miles)
 
 enum TriggerType {
   timer,
@@ -148,19 +146,18 @@ class BackgroundService extends TaskHandler implements DataOrchestrator {
   Future<void> setupActivityTracking() async {
     try {
       await stop();
-      if (_lastTrigger != TriggerType.timer) {
-        _waitBetweenCollections = _baseInterval;
-      } else {
-        _waitBetweenCollections =
-            computeNextDuration(_waitBetweenCollections, _baseInterval, _lastCollectionSuccess);
-      }
+      _waitBetweenCollections =
+          computeNextDuration(_waitBetweenCollections, _baseInterval, _lastCollectionSuccess);
 
       // Schedule the next collection
       _timer = Timer(_waitBetweenCollections, () {
         execute(TriggerType.timer);
       });
 
-      if (_waitBetweenCollections >= maxDelayBeforeGPS && (Platform.isAndroid || Platform.isIOS)) {
+      //
+      if (_waitBetweenCollections >= maxDelayBeforeGPS &&
+          _lastTrigger != TriggerType.movement &&
+          (Platform.isAndroid || Platform.isIOS)) {
         // Start listening for location changes if we are at max wait interval
         _locationSubscription =
             _locationService!.onLocationChanged.listen((_) => execute(TriggerType.movement));
@@ -212,11 +209,42 @@ class BackgroundService extends TaskHandler implements DataOrchestrator {
     _executing = true;
     _lastTrigger = trigger;
     await stop();
+
+    // Update notification to show collection in progress
+    FlutterForegroundTask.updateService(
+      notificationTitle: 'Nissan Leaf Battery Tracker',
+      notificationText: 'Collecting battery data...',
+    );
+
     // actual work
-    _lastCollectionSuccess = await _orchestrator.collectData().onError((e, stackTrace) {
-      _log.severe('Error collecting data: $e\n$stackTrace');
-      return false;
-    });
+    try {
+      _lastCollectionSuccess = await _orchestrator.collectData().onError((e, stackTrace) {
+        _log.severe('Error collecting data: $e\n$stackTrace');
+
+        // Update notification with error information
+        String errorMessage = 'Error collecting data';
+        if (e.toString().contains('bluetooth') || e.toString().contains('Bluetooth')) {
+          errorMessage = 'Bluetooth connection unavailable';
+        }
+
+        FlutterForegroundTask.updateService(
+          notificationTitle: 'Nissan Leaf Battery Tracker',
+          notificationText: '$errorMessage. Will retry later.',
+        );
+
+        return false;
+      });
+    } catch (e, stackTrace) {
+      _log.severe('Unexpected error in execute: $e\n$stackTrace');
+      _lastCollectionSuccess = false;
+
+      // Update notification with error information
+      FlutterForegroundTask.updateService(
+        notificationTitle: 'Nissan Leaf Battery Tracker',
+        notificationText: 'Service error. Will retry in a few minutes.',
+      );
+    }
+
     computeStats(trigger);
     await setupActivityTracking();
     _executing = false;

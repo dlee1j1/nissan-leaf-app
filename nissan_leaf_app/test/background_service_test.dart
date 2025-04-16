@@ -158,9 +158,7 @@ void main() {
 
       // Verify that the distance filter was set correctly
       verify(() => mockLocation.changeSettings(
-            accuracy: any(named: 'accuracy'),
-            distanceFilter: 800.0, // LOCATION_DISTANCE_FILTER
-          )).called(1);
+          accuracy: any(named: 'accuracy'), distanceFilter: LOCATION_DISTANCE_FILTER)).called(1);
     });
 
     test('setupLocationBasedCollection handles location service disabled', () async {

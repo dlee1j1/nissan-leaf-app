@@ -11,8 +11,7 @@
                 "Dart-Code.flutter",
                 "eamodio.gitlens",
                 "fsevenm.run-it-on",
-                "appulate.filewatcher",
-                "saoudrizwan.claude-dev"
+                "appulate.filewatcher"
             ]
         }
     }

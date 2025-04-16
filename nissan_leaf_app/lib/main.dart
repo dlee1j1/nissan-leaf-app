@@ -88,10 +88,19 @@ class _MainScreenState extends State<MainScreen> {
   Future<void> _initializeApp() async {
     // Check if service was enabled previously
     if (!kIsWeb) {
-      await BackgroundServiceController.initialize();
-         // Initialize the communication port for foreground task
-      FlutterForegroundTask.initCommunicationPort();
-      await BackgroundServiceController.startService();
+      try {
+        await BackgroundServiceController.initialize();
+        // Initialize the communication port for foreground task
+        FlutterForegroundTask.initCommunicationPort();
+        await BackgroundServiceController.startService();
+
+        // Set up service health check to run every 30 minutes
+        BackgroundServiceController.setupServiceHealthCheck(
+            checkInterval: const Duration(minutes: 30));
+      } catch (e) {
+        _log.severe('Error during app initialization: $e');
+        // Continue app startup even if background service fails
+      }
     }
 
     setState(() {

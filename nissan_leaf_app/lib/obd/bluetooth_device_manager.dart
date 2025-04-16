@@ -104,22 +104,34 @@ class BluetoothDeviceManager {
       final isOn = await _bluetoothService.isBluetoothOn();
       if (!isOn) {
         _log.info('Bluetooth is off, attempting to turn on');
-        await _bluetoothService.turnOnBluetooth();
+        try {
+          await _bluetoothService.turnOnBluetooth();
+        } catch (e) {
+          _log.warning('Could not turn on Bluetooth: $e');
+          _updateStatus(ConnectionStatus.error, 'Bluetooth unavailable');
+          return []; // Return empty list instead of throwing
+        }
       }
 
       // Start the scan
-      final results = await _bluetoothService.scanForDevices(
-        timeout: timeout,
-        nameFilters: nameFilters,
-      );
+      try {
+        final results = await _bluetoothService.scanForDevices(
+          timeout: timeout,
+          nameFilters: nameFilters,
+        );
 
-      _log.info('Bluetooth scan completed. Found ${results.length} devices');
-      _updateStatus(ConnectionStatus.scanComplete);
-      return results;
+        _log.info('Bluetooth scan completed. Found ${results.length} devices');
+        _updateStatus(ConnectionStatus.scanComplete);
+        return results;
+      } catch (e) {
+        _log.warning('Error during device scan: $e');
+        _updateStatus(ConnectionStatus.error, 'Scan error: $e');
+        return []; // Return empty list instead of throwing
+      }
     } catch (e) {
-      _log.warning('Error during device scan: $e');
-      _updateStatus(ConnectionStatus.error, 'Scan error: $e');
-      rethrow;
+      _log.warning('Unexpected error in scanForDevices: $e');
+      _updateStatus(ConnectionStatus.error, 'Unexpected error: $e');
+      return []; // Return empty list for any error
     }
   }
 

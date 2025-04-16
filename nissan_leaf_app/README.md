@@ -4,8 +4,6 @@
 
 ## Project Architecture
 
-The project follows a focused, pragmatic architecture:
-
 ### Core Components
 
 - **OBD Communication Layer** ([details](lib/obd/readme.md))
