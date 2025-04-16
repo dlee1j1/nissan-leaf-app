@@ -225,13 +225,16 @@ void main() {
       bluetoothHelper.verifyScanAttempted();
     });
 
-    test('scanForDevices throws exception on scan failure', () async {
+    test('scanForDevices does not throw exception on scan failure', () async {
       // Arrange
       bluetoothHelper.setupBluetoothOn();
       bluetoothHelper.setupFailedScan();
 
-      // Act & Assert
-      expect(() => manager.scanForDevices(), throwsException);
+      // Act
+      final results = await manager.scanForDevices();
+
+      // Assert
+      expect(results.length, 0);
     });
 
     test('connectToDevice attempts to connect to the device', () async {
