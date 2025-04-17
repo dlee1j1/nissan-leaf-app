@@ -93,10 +93,6 @@ class _MainScreenState extends State<MainScreen> {
         // Initialize the communication port for foreground task
         FlutterForegroundTask.initCommunicationPort();
         await BackgroundServiceController.startService();
-
-        // Set up service health check to run every 30 minutes
-        BackgroundServiceController.setupServiceHealthCheck(
-            checkInterval: const Duration(minutes: 30));
       } catch (e) {
         _log.severe('Error during app initialization: $e');
         // Continue app startup even if background service fails

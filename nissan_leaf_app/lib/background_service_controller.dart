@@ -197,18 +197,12 @@ class BackgroundServiceController {
   static Future<bool> startService() async {
     if (_isSupported) {
       _log.info('Starting background service');
-      try {
-        await _foregroundTask.startService(
-          notificationTitle: 'Nissan Leaf Battery Tracker',
-          notificationText: 'Monitoring battery status',
-          callback: backgroundServiceEntryPoint,
-        );
-        return true;
-      } catch (e) {
-        _log.severe('Error starting background service: $e');
-        // Log the error but allow the app to continue
-        return false;
-      }
+      await _foregroundTask.startService(
+        notificationTitle: 'Nissan Leaf Battery Tracker',
+        notificationText: 'Monitoring battery status',
+        callback: backgroundServiceEntryPoint,
+      );
+      return true;
     } else {
       return false;
     }
@@ -231,60 +225,6 @@ class BackgroundServiceController {
       return false;
     }
 
-    try {
-      return await _foregroundTask.isRunningService;
-    } catch (e) {
-      _log.warning('Error checking if service is running: $e');
-      return false;
-    }
-  }
-
-  /// Setup periodic service health check and restart if needed
-  static Timer? _serviceHealthCheckTimer;
-
-  static void setupServiceHealthCheck({Duration checkInterval = const Duration(minutes: 30)}) {
-    if (!_isSupported) return;
-
-    // Cancel any existing timer
-    _serviceHealthCheckTimer?.cancel();
-
-    // Create a new timer for periodic checks
-    _serviceHealthCheckTimer = Timer.periodic(checkInterval, (_) async {
-      _log.info('Performing background service health check');
-
-      try {
-        bool isRunning = await isServiceRunning();
-
-        if (!isRunning) {
-          _log.warning('Background service not running, attempting to restart');
-
-          // First try to initialize if needed
-          await initialize();
-
-          // Then try to start the service
-          bool started = await startService();
-
-          if (started) {
-            _log.info('Successfully restarted background service');
-          } else {
-            _log.warning('Failed to restart background service');
-          }
-        } else {
-          _log.info('Background service is running correctly');
-        }
-      } catch (e) {
-        _log.severe('Error during service health check: $e');
-        // Even if health check fails, we keep the timer running
-      }
-    });
-
-    _log.info('Service health check scheduled every ${checkInterval.inMinutes} minutes');
-  }
-
-  /// Stop the service health check
-  static void stopServiceHealthCheck() {
-    _serviceHealthCheckTimer?.cancel();
-    _serviceHealthCheckTimer = null;
-    _log.info('Service health check stopped');
+    return await _foregroundTask.isRunningService;
   }
 }

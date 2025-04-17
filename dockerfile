@@ -49,12 +49,13 @@ RUN mkdir -p ~/.android && \
 # Create non-root user
 RUN getent group 1000 || groupadd -g 1000 developer && \
     getent passwd 1000 || useradd -u 1000 -g 1001 -m developer -s /bin/bash && \
-    echo "\nUID_1000 ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/node-user && \
-    chmod 0440 /etc/sudoers.d/node-user
+    echo "\nUID_1000 ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/node && \
+    chmod 0440 /etc/sudoers.d/node
 
 # Set ownership for Flutter and Android directories
 RUN mkdir -p /opt/flutter /opt/android-sdk-linux && \
-    chown -R 1000:1000 /opt/flutter /opt/android-sdk-linux
+    chown -R 1000:1000 /opt/flutter /opt/android-sdk-linux && \
+    chown -R 1000:1000 /home/node 
 
 # Download and install repomix for communicating with LLMs
 # Install Node.js, npm, and Repomix
