@@ -1,7 +1,16 @@
-.PHONY: setup run clean repomix 
+.PHONY: docker-build docker-shell docker-restart docker-stop docker-adb
+CONTAINER_NAME=flutter_dev
 
-
+# Most targets run inside the container so run docker-compose and exec to run make inside if not in the container
+ifneq ($(shell [ -f /.dockerenv ] && echo 1),1)
+# This is the host environment
+%: 
+	@echo "Running '$@' inside container..." 
+	docker-compose up -d && docker-compose exec -T $(CONTAINER_NAME) make $@
+else
 # Flutter section - this stuff runs inside the container
+
+.PHONY: setup run clean repomix 
 
 setup:	
 # install the flutter SDK if it's not there
@@ -77,6 +86,7 @@ repomix-clean:
 repomix-force:
 	$(MAKE) -C repomix force
 
+endif
 
 # Docker stuff - this stuff runs outside the container
 docker-build: .docker-build-stamp 
