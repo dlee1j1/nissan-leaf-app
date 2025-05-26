@@ -6,6 +6,7 @@ import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:location/location.dart' as loc;
 import 'package:meta/meta.dart';
 import 'package:simple_logger/simple_logger.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'data_orchestrator.dart';
 
 // Key constants for shared preferences
@@ -81,21 +82,66 @@ class BackgroundService extends TaskHandler implements DataOrchestrator {
 
   @override
   Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
-    _log.info('Background service started - starter: ${starter.name})');
+    try {
+      _log.info('Background service started - starter: ${starter.name})');
 
-    // Set up location service if on mobile
-    if (!kIsWeb) {
-      await _setupLocationBasedCollection();
+      // Check if this might be a restart after a crash
+      final prefs = await SharedPreferences.getInstance();
+      final lastShutdownStr = prefs.getString('service_last_shutdown');
+
+      // Reset state to ensure we start clean
+      _executing = false;
+
+      if (lastShutdownStr != null) {
+        try {
+          final lastShutdown = DateTime.parse(lastShutdownStr);
+          if (DateTime.now().difference(lastShutdown).inMinutes < 5) {
+            // This is likely a quick restart - could be a crash recovery
+            _log.warning('Service restarted soon after shutdown - possible crash recovery');
+            // Be more conservative with collection frequency
+            int currentFreq = _baseInterval.inMinutes;
+            if (currentFreq < 5) {
+              _baseInterval = Duration(minutes: 5);
+              _log.info(
+                  'Adjusted base interval to ${_baseInterval.inMinutes} minutes for stability');
+            }
+          }
+        } catch (e) {
+          _log.warning('Error parsing last shutdown time: $e');
+        }
+      }
+
+      // Set up location service if on mobile
+      if (!kIsWeb) {
+        try {
+          await _setupLocationBasedCollection();
+        } catch (e) {
+          _log.warning('Error setting up location collection: $e');
+          // Continue even if location setup fails
+        }
+      }
+
+      // Start collection
+      try {
+        await execute(TriggerType.manual);
+      } catch (e) {
+        _log.severe('Error during initial collection: $e');
+        // Continue service operation even if initial collection fails
+      }
+
+      // Update notification
+      try {
+        FlutterForegroundTask.updateService(
+          notificationTitle: 'Nissan Leaf Battery Tracker',
+          notificationText: 'Collecting every ${_waitBetweenCollections.inMinutes} minutes',
+        );
+      } catch (e) {
+        _log.warning('Error updating notification: $e');
+      }
+    } catch (e, stackTrace) {
+      _log.severe('Fatal error in onStart: $e\n$stackTrace');
+      // Don't let errors in onStart prevent service from running
     }
-
-    // Start collection
-    await execute(TriggerType.manual);
-
-    // Update notification
-    FlutterForegroundTask.updateService(
-      notificationTitle: 'Nissan Leaf Battery Tracker',
-      notificationText: 'Collecting every ${_waitBetweenCollections.inMinutes} minutes',
-    );
   }
 
   /// Set up location-based collection
@@ -205,49 +251,75 @@ class BackgroundService extends TaskHandler implements DataOrchestrator {
   /// Main collection execution method
   Future<void> execute(TriggerType trigger) async {
     if (_executing) return; // drop the activity if we get here multiple times
-    _log.info("Executing based on $trigger");
+
     _executing = true;
-    _lastTrigger = trigger;
-    await stop();
-
-    // Update notification to show collection in progress
-    FlutterForegroundTask.updateService(
-      notificationTitle: 'Nissan Leaf Battery Tracker',
-      notificationText: 'Collecting battery data...',
-    );
-
-    // actual work
     try {
-      _lastCollectionSuccess = await _orchestrator.collectData().onError((e, stackTrace) {
-        _log.severe('Error collecting data: $e\n$stackTrace');
+      _log.info("Executing based on $trigger");
+      _lastTrigger = trigger;
+      await stop();
 
-        // Update notification with error information
-        String errorMessage = 'Error collecting data';
-        if (e.toString().contains('bluetooth') || e.toString().contains('Bluetooth')) {
-          errorMessage = 'Bluetooth connection unavailable';
-        }
-
+      // Update notification to show collection in progress
+      try {
         FlutterForegroundTask.updateService(
           notificationTitle: 'Nissan Leaf Battery Tracker',
-          notificationText: '$errorMessage. Will retry later.',
+          notificationText: 'Collecting battery data...',
         );
+      } catch (e) {
+        _log.warning('Failed to update notification: $e');
+        // Continue even if notification update fails
+      }
 
-        return false;
-      });
+      // actual work
+      try {
+        _lastCollectionSuccess = await _orchestrator.collectData().onError((e, stackTrace) {
+          _log.severe('Error collecting data: $e\n$stackTrace');
+
+          // Update notification with error information
+          String errorMessage = 'Error collecting data';
+          if (e.toString().contains('bluetooth') || e.toString().contains('Bluetooth')) {
+            errorMessage = 'Bluetooth connection unavailable';
+          }
+
+          try {
+            FlutterForegroundTask.updateService(
+              notificationTitle: 'Nissan Leaf Battery Tracker',
+              notificationText: '$errorMessage. Will retry later.',
+            );
+          } catch (notifError) {
+            _log.warning('Failed to update error notification: $notifError');
+          }
+
+          return false;
+        });
+      } catch (e, stackTrace) {
+        _log.severe('Unexpected error in execute: $e\n$stackTrace');
+        _lastCollectionSuccess = false;
+
+        // Update notification with error information
+        try {
+          FlutterForegroundTask.updateService(
+            notificationTitle: 'Nissan Leaf Battery Tracker',
+            notificationText: 'Service error. Will retry in a few minutes.',
+          );
+        } catch (notifError) {
+          _log.warning('Failed to update error notification: $notifError');
+        }
+      }
+
+      computeStats(trigger);
+      await setupActivityTracking();
     } catch (e, stackTrace) {
-      _log.severe('Unexpected error in execute: $e\n$stackTrace');
+      _log.severe('Fatal error in background service execute: $e\n$stackTrace');
       _lastCollectionSuccess = false;
-
-      // Update notification with error information
-      FlutterForegroundTask.updateService(
-        notificationTitle: 'Nissan Leaf Battery Tracker',
-        notificationText: 'Service error. Will retry in a few minutes.',
-      );
+      // Attempt to recover by scheduling next collection
+      try {
+        await setupActivityTracking();
+      } catch (setupError) {
+        _log.severe('Failed to set up next collection: $setupError');
+      }
+    } finally {
+      _executing = false; // Always reset execution flag
     }
-
-    computeStats(trigger);
-    await setupActivityTracking();
-    _executing = false;
   }
 
   /// Update collection frequency
@@ -279,14 +351,38 @@ class BackgroundService extends TaskHandler implements DataOrchestrator {
 
   @override
   void dispose() {
-    stop().then((_) {
-      if (_createdOrchestrator) _orchestrator.dispose();
-    });
+    try {
+      stop().then((_) {
+        // Ensure _orchestrator is disposed only if we created it
+        if (_createdOrchestrator) {
+          try {
+            _orchestrator.dispose();
+          } catch (e) {
+            _log.warning('Error disposing orchestrator: $e');
+          }
+        }
+      }).catchError((e) {
+        _log.severe('Error during stop in dispose: $e');
+      });
+    } catch (e) {
+      _log.severe('Error during dispose: $e');
+      // Don't rethrow to avoid crashing the service
+    }
   }
 
   @override
   Future<void> onDestroy(DateTime timestamp) async {
     _log.info('Background service being destroyed');
-    dispose();
+    try {
+      // Save any persistent state that might be needed on restart
+      final prefs = await SharedPreferences.getInstance();
+      prefs.setString('service_last_shutdown', DateTime.now().toIso8601String());
+
+      // Clean up resources
+      dispose();
+    } catch (e, stackTrace) {
+      _log.severe('Error during onDestroy: $e\n$stackTrace');
+      // Don't let exceptions in onDestroy crash the service
+    }
   }
 }
