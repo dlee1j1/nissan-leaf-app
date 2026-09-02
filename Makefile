@@ -10,22 +10,44 @@ ifneq ($(shell [ -f /.dockerenv ] && echo 1),1)
 else
 # Flutter section - this stuff runs inside the container
 
-.PHONY: setup run clean repomix 
+.PHONY: setup run clean repomix android-engine-shim
 
-setup:	
-# install the flutter SDK if it's not there
-	if [ ! -f "/opt/flutter/bin/flutter" ]; then \
-	  echo "Flutter not found, installing..."; \
-	  git clone https://github.com/flutter/flutter.git /opt/flutter && \
-	  cd /opt/flutter && git checkout stable && sleep 1 &&\
-	  /opt/flutter/bin/flutter doctor; \
-	else \
-	  echo "Flutter already installed."; \
+# Pin the Flutter SDK to an exact release. Bump this on purpose; do NOT track a
+# moving channel like "stable" -- that drift is what broke the Android release build.
+FLUTTER_VERSION := 3.47.2
+
+setup:
+# install the flutter SDK if it's not there, then pin it to $(FLUTTER_VERSION)
+	if [ ! -x "/opt/flutter/bin/flutter" ]; then \
+	  echo "Flutter not found, cloning..."; \
+	  git clone https://github.com/flutter/flutter.git /opt/flutter; \
 	fi
+	cd /opt/flutter && git fetch --tags --force
+	cd /opt/flutter && [ "$$(git describe --tags --exact-match 2>/dev/null)" = "$(FLUTTER_VERSION)" ] \
+	  || git -c advice.detachedHead=false checkout -f $(FLUTTER_VERSION)
+	/opt/flutter/bin/flutter --version
 	ln -sf /opt/android-tools /opt/flutter/bin/cache/artifacts/engine
 	ln -sf nissan_leaf_app/.dart_tool .
 	cd nissan_leaf_app && flutter config --enable-linux-desktop
 	cd nissan_leaf_app && flutter pub get
+	$(MAKE) android-engine-shim
+
+# Flutter ships the Android AOT toolchain (gen_snapshot) as x86_64 only. On an
+# arm64 host it runs under Docker Desktop's Rosetta emulation, but Flutter looks
+# for it under a linux-arm64/ host directory. Point that at the linux-x64/ payload.
+# No-op on x86_64 hosts. (The x86_64 runtime libs it needs are installed in the image.)
+android-engine-shim:
+	@case "$$(uname -m)" in \
+	  aarch64|arm64) \
+	    PATH="/opt/flutter/bin:$$PATH" flutter precache --android >/dev/null || true; \
+	    cd /opt/flutter/bin/cache/artifacts/engine && \
+	    for d in android-*-release android-*-profile; do \
+	      if [ -d "$$d/linux-x64" ] && [ ! -e "$$d/linux-arm64" ]; then \
+	        ln -s linux-x64 "$$d/linux-arm64" && echo "engine shim: $$d/linux-arm64 -> linux-x64"; \
+	      fi; \
+	    done ;; \
+	  *) echo "android-engine-shim: $$(uname -m) host, nothing to do" ;; \
+	esac
 
 # fix permissions to let WSL test runner to work (in addition to the container) 
 fix-permissions:
@@ -66,9 +88,9 @@ linux:  test # doesn't work due to issues with bluetooth and X inside the contai
 android: check-adb test
 	cd nissan_leaf_app && flutter run -d $(shell adb devices | grep -v "List" | grep "device$$" | head -1 | cut -f1)
 
-apk:  test
+apk:  android-engine-shim test
 	cd nissan_leaf_app && flutter build apk --release
-	mv nissan_leaf_app/build/app/outputs/apk/release/app-release.apk nissan-leaf-app.apk
+	mv nissan_leaf_app/build/app/outputs/flutter-apk/app-release.apk nissan-leaf-app.apk
 
 web:  test
 	cd nissan_leaf_app && flutter run -d web-server --web-hostname=0.0.0.0 --web-port=8080
