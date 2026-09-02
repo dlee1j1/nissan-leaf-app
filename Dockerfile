@@ -30,6 +30,20 @@ RUN apt-get update && apt-get install -y \
     sudo && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
+# Flutter ships the Android release toolchain (gen_snapshot, and the NDK
+# llvm-strip/lld it invokes) as x86_64 binaries only. On an arm64 host they run
+# under Docker Desktop's Rosetta emulation, which needs the x86_64 runtime
+# libraries present via dpkg multiarch. Harmless on an x86_64 host.
+RUN dpkg --add-architecture amd64 && apt-get update && apt-get install -y \
+    libc6:amd64 \
+    libstdc++6:amd64 \
+    libgcc-s1:amd64 \
+    zlib1g:amd64 \
+    libxml2:amd64 \
+    libncurses6:amd64 \
+    libtinfo6:amd64 && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
 # install before the Android SDK which may change
 RUN npm install -g repomix
 
