@@ -2,17 +2,24 @@
 
 ## 2026-09-02 — Fixing `make apk` (Android release build)
 
-Branch: `fix/android-release-build` (4 commits). Not on `master` — fast-forward
+Branch: `fix/android-release-build` (6 commits). Not on `master` — fast-forward
 `master` onto it if that's where these belong.
 
 `make apk` now produces `nissan-leaf-app.apk` (~53 MB fat APK, arm64-v8a /
-armeabi-v7a / x86_64). All 92 tests pass under the pinned SDK.
+armeabi-v7a / x86_64), verified from a clean tree (`flutter clean` then
+`make apk`). All 92 tests pass under the pinned SDK.
 
 ### Root causes
 
 1. `Makefile` `setup` checked out the `stable` channel, so rebuilds drifted onto
    whatever Flutter stable had become (now 3.47.2). That new Flutter requires
    Gradle >= 8.14 (project was on 8.3) and defaults toward AGP 9.
+1b. Container came up via `make fix-permissions && tail -f /dev/null`. Its
+   `chmod -R go+w .` over the bind mount intermittently fails
+   (`fts_read failed: No such file or directory`) on the macOS VirtioFS mount
+   when the tree churns — which killed the container, so every subsequent
+   `make apk` from the host hit a dead container (`Error 137` / `Error 2`).
+   Fixed by making all `fix-permissions` chmod lines non-fatal.
 2. Separately, this repo builds inside an **arm64** Linux container on an Apple
    Silicon host. Flutter ships the Android AOT toolchain (`gen_snapshot`) and the
    NDK strip/link tools as **x86_64 only**. They can run under Docker Desktop's
@@ -89,9 +96,10 @@ armeabi-v7a / x86_64). All 92 tests pass under the pinned SDK.
   there won't block `apk`).
 - **Gradle daemon flakiness.** The daemon crashed mid-build twice
   ("Gradle build daemon disappeared unexpectedly"), each time leaving a Rosetta
-  core dump; a plain re-run of `flutter build apk --release` succeeded both times.
-  Looks like Rosetta flakiness under load rather than a config error, but I can't
-  rule out memory pressure (daemon heap is `-Xmx4G`). If it recurs, try
+  core dump; a plain re-run succeeded both times. A later clean `make apk` peaked
+  under ~1 GB (limit 7.7 GB), so it is not general memory pressure — likely
+  Rosetta flakiness on a forked toolchain process, or it was collateral from the
+  bricked-container issue (1b) tearing things down. If it recurs, try
   `org.gradle.daemon=false` or a smaller heap in `android/gradle.properties`.
 - The first `make apk` in a fresh container will be slow (minutes): the Dart AOT
   compile runs under Rosetta. Subsequent builds are Gradle-cached and fast.
