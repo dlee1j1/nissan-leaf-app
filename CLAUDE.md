@@ -4,10 +4,10 @@ Flutter app that captures Nissan Leaf metrics over BLE from an OBD-II dongle.
 
 ## Where things go
 
-- **CLAUDE.md** (this file) — build conventions, environment gotchas, and
-  architectural decisions with their reasoning. Read every session, so keep
-  it short. Add something here only when it would change how the next
-  session works.
+- **CLAUDE.md** (this file) — build conventions and environment gotchas.
+  Read every session, so keep it short. Add something here only when it
+  would change how the next session works. Subsystem design decisions live
+  with that subsystem's docs (e.g. `nissan_leaf_app/docs/`), not here.
 - **README.md** — what the project is and how to get started. Introduction,
   not reasoning.
 - **GitHub issues** — task detail, scope, and acceptance criteria. Also
@@ -42,26 +42,4 @@ Flutter, the Android SDK, and Gradle exist only inside the container.
   Tracking `stable` is what silently broke the build; don't unpin it.
 - USB passthrough doesn't work under Colima on macOS. Build the APK in
   the container, then `adb install` from the host.
-
-## Decisions
-
-**The background service dies because Android kills it, not because it
-crashes.** Random death after hours, surviving when freshly started, is
-resource reclamation. Don't add watchdogs or restart logic — that's a
-treadmill against every OEM battery manager.
-
-**Instead, only run when it matters.** Metrics are only interesting while
-driving, and the OBD dongle appears on BLE when the car powers on. A
-manifest-declared receiver on `ACTION_ACL_CONNECTED` starts the foreground
-service; disconnect stops it. Nothing running means nothing to kill.
-
-**No boot receiver.** Manifest-declared receivers are registered from the
-package, so they survive reboots without a live process. Revisit only if
-the heartbeat log shows missed drives.
-
-**No persisted "service enabled" flag.** The dongle's presence is the
-source of truth; a stored flag can only disagree with reality.
-
-**Permission checks belong in the receiver path**, not just at app launch.
-Permissions can be revoked between drives.
 

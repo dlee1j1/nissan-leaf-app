@@ -12,7 +12,7 @@ This application connects to your Nissan Leaf via an OBD-II Bluetooth adapter to
 - And numerous other OBD metrics
 
 Tthis app allows you to:
-- Track battery metrics while driving
+- Track battery metrics while driving — collection starts automatically when the car powers on and the OBD dongle connects over Bluetooth, and stops when it disconnects
 - Store historical data for analysis
 - (Optional) Send metrics to Home Assistant via MQTT
 
