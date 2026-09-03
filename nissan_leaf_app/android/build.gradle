@@ -5,14 +5,29 @@ allprojects {
     }
 }
 
-rootProject.buildDir = "../build"
+// Gradle 9 removed the Project.buildDir property; use the buildDirectory provider.
+rootProject.layout.buildDirectory.set(file("../build"))
 subprojects {
-    project.buildDir = "${rootProject.buildDir}/${project.name}"
+    project.layout.buildDirectory.set(rootProject.layout.buildDirectory.dir(project.name))
+}
+// Some plugins (e.g. flutter_blue_plus_android) still declare a compileSdk that is
+// lower than what their own AndroidX dependencies require, which fails AGP's AAR
+// metadata check during `flutter build apk`. Raise every Android plugin module to
+// the app's compileSdk. Registered before the evaluationDependsOn block below so
+// none of the subprojects have been evaluated yet.
+subprojects {
+    afterEvaluate { subproject ->
+        if (subproject.plugins.hasPlugin("com.android.library")) {
+            subproject.android {
+                compileSdk = rootProject.project(":app").android.compileSdk
+            }
+        }
+    }
 }
 subprojects {
     project.evaluationDependsOn(":app")
 }
 
 tasks.register("clean", Delete) {
-    delete rootProject.buildDir
+    delete rootProject.layout.buildDirectory
 }
