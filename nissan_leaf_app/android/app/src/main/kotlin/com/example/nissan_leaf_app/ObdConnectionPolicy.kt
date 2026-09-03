@@ -10,7 +10,20 @@ package com.example.nissan_leaf_app
 enum class ObdAction { START, STOP, IGNORE }
 
 object ObdConnectionPolicy {
-    /** Name fragments that identify an OBD dongle - matches BluetoothDeviceManager. */
+    /**
+     * Name fragments that identify an OBD dongle - matches BluetoothDeviceManager.
+     *
+     * The name check is only the *fallback*. The reliable path is the saved MAC
+     * (`savedDeviceId`), which BluetoothDeviceManager writes after the first
+     * successful in-app connect. Until that happens - i.e. on a fresh install,
+     * before the user has ever connected from the app - matching is name-only.
+     *
+     * So if a dongle advertises some name that isn't "OBD"/"ELM" (cheap clones
+     * vary), the very first drive won't auto-start the service; the user has to
+     * open the app and connect once, after which the saved MAC takes over. If
+     * that turns out to bite with real hardware, add the offending name fragment
+     * here (uppercase).
+     */
     private val NAME_HINTS = listOf("OBD", "ELM")
 
     /**
