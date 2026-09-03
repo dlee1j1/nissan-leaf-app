@@ -252,8 +252,8 @@ class BluetoothDeviceManager {
     } finally {
       _isConnecting = false;
     }
-    // should never reach here, if static analysis doesn't show below as an error, something is wrong
-    throw Exception('Unreachable code reached');
+    // try and catch both return; Dart's body_might_complete_normally makes a
+    // fall-through here a compile error, so no explicit tripwire is needed.
   }
 
   /// Disconnect from the current device
