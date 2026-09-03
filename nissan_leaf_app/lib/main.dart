@@ -86,12 +86,15 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   Future<void> _initializeApp() async {
-    // Check if service was enabled previously
     if (!kIsWeb) {
       try {
         await BackgroundServiceController.initialize();
         // Initialize the communication port for foreground task
         FlutterForegroundTask.initCommunicationPort();
+        // Start the service once here so flutter_foreground_task persists its
+        // notification options and Dart callback handle. The native
+        // ObdConnectionReceiver relies on that persisted config to relaunch the
+        // service headless when the OBD dongle connects on a later drive.
         await BackgroundServiceController.startService();
       } catch (e) {
         _log.severe('Error during app initialization: $e');

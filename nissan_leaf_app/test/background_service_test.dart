@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nissan_leaf_app/background_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -6,6 +7,9 @@ import 'package:mocktail/mocktail.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:location/location.dart' as loc;
 import 'package:nissan_leaf_app/data_orchestrator.dart';
+import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
+import 'package:permission_handler_platform_interface/permission_handler_platform_interface.dart';
+import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
 // Mock classes
 class MockLocation extends Mock implements loc.Location {
@@ -83,6 +87,34 @@ class MockDirectOBDOrchestrator extends Mock implements DirectOBDOrchestrator {
   void dispose() {
     _statusController.close();
   }
+}
+
+// Fakes for the platform interfaces the heartbeat / prerequisite code touches.
+class _FakePathProvider extends PathProviderPlatform with MockPlatformInterfaceMixin {
+  _FakePathProvider(this.basePath);
+  final String basePath;
+
+  @override
+  Future<String?> getApplicationDocumentsPath() async => basePath;
+  @override
+  Future<String?> getApplicationSupportPath() async => basePath;
+  @override
+  Future<String?> getTemporaryPath() async => basePath;
+}
+
+class _FakePermissionHandler extends PermissionHandlerPlatform with MockPlatformInterfaceMixin {
+  _FakePermissionHandler(this.status);
+  final PermissionStatus status;
+
+  @override
+  Future<PermissionStatus> checkPermissionStatus(Permission permission) async => status;
+  @override
+  Future<ServiceStatus> checkServiceStatus(Permission permission) async => ServiceStatus.enabled;
+  @override
+  Future<Map<Permission, PermissionStatus>> requestPermissions(List<Permission> permissions) async =>
+      {for (final p in permissions) p: status};
+  @override
+  Future<bool> openAppSettings() async => true;
 }
 
 void main() {
@@ -213,7 +245,11 @@ void main() {
   });
 
   group('Service Logic', () {
-    setUp(() {
+    setUp(() async {
+      // Start from a fresh singleton so a pending timer / in-flight execute()
+      // from an earlier group can't bleed into these tests.
+      BackgroundService.resetForTesting();
+
       // Setup common mock behaviors
       when(() => mockLocation.serviceEnabled()).thenAnswer((_) async => true);
       when(() => mockLocation.requestService()).thenAnswer((_) async => true);
@@ -231,8 +267,10 @@ void main() {
         locationService: mockLocation,
       );
 
-      // Manually call onStart to simulate service start
-      backgroundService.onStart(DateTime.now(), mockTaskStarter);
+      when(() => mockOrchestrator.collectData()).thenAnswer((_) async => true);
+
+      // Await it so the initial execute() finishes before any test body runs.
+      await backgroundService.onStart(DateTime.now(), mockTaskStarter);
 
       // Reset the mock to clear the initial call during onStart
       reset(mockOrchestrator);
@@ -289,6 +327,67 @@ void main() {
           backgroundService.computeNextDuration(Duration(minutes: 25), Duration(minutes: 3), false),
           equals(Duration(minutes: 30)) // Should cap at maxDelay (30 minutes)
           );
+    });
+  });
+
+  group('Heartbeat and prerequisites', () {
+    late Directory tempDir;
+    late PathProviderPlatform originalPathProvider;
+    late PermissionHandlerPlatform originalPermissionHandler;
+
+    setUp(() async {
+      BackgroundService.resetForTesting();
+      tempDir = await Directory.systemTemp.createTemp('heartbeat_test');
+      originalPathProvider = PathProviderPlatform.instance;
+      originalPermissionHandler = PermissionHandlerPlatform.instance;
+      PathProviderPlatform.instance = _FakePathProvider(tempDir.path);
+      PermissionHandlerPlatform.instance = _FakePermissionHandler(PermissionStatus.granted);
+
+      when(() => mockLocation.serviceEnabled()).thenAnswer((_) async => true);
+      when(() => mockLocation.requestService()).thenAnswer((_) async => true);
+      when(() => mockLocation.hasPermission())
+          .thenAnswer((_) async => loc.PermissionStatus.granted);
+      when(() => mockLocation.changeSettings(
+            accuracy: any(named: 'accuracy'),
+            distanceFilter: any(named: 'distanceFilter'),
+          )).thenAnswer((_) async => true);
+      when(() => mockOrchestrator.collectData()).thenAnswer((_) async => true);
+    });
+
+    tearDown(() async {
+      BackgroundService.resetForTesting();
+      PathProviderPlatform.instance = originalPathProvider;
+      PermissionHandlerPlatform.instance = originalPermissionHandler;
+      if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+    });
+
+    File heartbeatLog() => File('${tempDir.path}/service_heartbeat.log');
+
+    test('onStart writes a start line and a per-cycle line to the heartbeat log', () async {
+      backgroundService = BackgroundService();
+      backgroundService.setOrchestratorForTesting(mockOrchestrator);
+
+      await backgroundService.onStart(DateTime.now(), TaskStarter.system);
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      expect(heartbeatLog().existsSync(), isTrue);
+      final contents = await heartbeatLog().readAsString();
+      expect(contents, contains('start (system)'));
+      expect(contents, contains('cycle trigger='));
+    });
+
+    test('onStart stops the service and logs an abort when a permission is missing', () async {
+      PermissionHandlerPlatform.instance = _FakePermissionHandler(PermissionStatus.denied);
+
+      backgroundService = BackgroundService();
+      backgroundService.setOrchestratorForTesting(mockOrchestrator);
+      clearInteractions(mockOrchestrator);
+
+      await backgroundService.onStart(DateTime.now(), TaskStarter.system);
+
+      verifyNever(() => mockOrchestrator.collectData());
+      final contents = await heartbeatLog().readAsString();
+      expect(contents, contains('abort - missing prerequisites'));
     });
   });
 }

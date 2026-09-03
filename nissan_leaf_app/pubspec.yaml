@@ -65,6 +65,12 @@ dev_dependencies:
   sqflite_common_ffi: ^2.3.5
   mocktail: ^1.0.4
   fake_async: ^1.3.2
+  # Used by background_service_test to fake the platform side of the heartbeat
+  # log and permission checks. Already present transitively; pinned here so the
+  # test imports are declared dependencies.
+  path_provider_platform_interface: ^2.1.2
+  permission_handler_platform_interface: ^4.3.0
+  plugin_platform_interface: ^2.1.8
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
