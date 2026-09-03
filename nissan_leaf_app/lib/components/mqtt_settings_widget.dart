@@ -195,7 +195,7 @@ class _MqttSettingsWidgetState extends State<MqttSettingsWidget> {
                           _isEnabled = value;
                         });
                       },
-                      activeColor: Colors.green,
+                      activeThumbColor: Colors.green,
                     ),
                   ],
                 ),

@@ -130,7 +130,9 @@ class BackgroundServiceController {
           playSound: false,
         ),
         foregroundTaskOptions: ForegroundTaskOptions(
-          eventAction: ForegroundTaskEventAction.repeat(60 * 1000),
+          // No periodic wakeup: scheduling is driven by BackgroundService's own
+          // timer, and liveness is tracked in service_heartbeat.log (issue #3).
+          eventAction: ForegroundTaskEventAction.nothing(),
           // No boot behaviour: the dongle's BLE presence is the only trigger.
           // See the Decisions section in CLAUDE.md and issue #3.
           autoRunOnBoot: false,

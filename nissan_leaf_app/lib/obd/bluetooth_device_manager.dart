@@ -246,14 +246,17 @@ class BluetoothDeviceManager {
       // Record device-specific error
       _recordConnectionError(device, e.toString());
 
-      // Clean up if connection failed
-      disconnect();
+      // Clean up if connection failed. Must be awaited: the finally below
+      // clears _isConnecting, and a caller retrying on `false` (autoConnectToObd
+      // loops over devices) would otherwise start the next connect while this
+      // BLE teardown is still in flight.
+      await disconnect();
       return false;
     } finally {
       _isConnecting = false;
     }
-    // should never reach here, if static analysis doesn't show below as an error, something is wrong
-    throw Exception('Unreachable code reached');
+    // try and catch both return; Dart's body_might_complete_normally makes a
+    // fall-through here a compile error, so no explicit tripwire is needed.
   }
 
   /// Disconnect from the current device

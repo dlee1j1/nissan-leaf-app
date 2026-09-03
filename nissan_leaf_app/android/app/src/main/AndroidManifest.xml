@@ -16,10 +16,17 @@
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:enableOnBackInvokedCallback="true">
+        <!-- stopWithTask=true turns off flutter_foreground_task's restart
+             machinery: no 5s RestartReceiver alarm in onDestroy, no alarm on
+             task-swipe, and START_NOT_STICKY instead of START_STICKY. The
+             dongle's BLE presence is the only trigger (see CLAUDE.md Decisions
+             and issue #3); a mid-drive kill is left dead until the next
+             connection rather than fought with a restart treadmill. -->
         <service
             android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
             android:foregroundServiceType="location|dataSync"
             android:enabled="true"
+            android:stopWithTask="true"
         />
         <!-- Starts/stops the foreground service from the OBD dongle's BLE
              connection. ACL_CONNECTED/DISCONNECTED are exempt from the implicit

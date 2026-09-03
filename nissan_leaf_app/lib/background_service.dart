@@ -385,13 +385,10 @@ class BackgroundService extends TaskHandler implements DataOrchestrator {
     execute(TriggerType.manual);
   }
 
-  int _calls = 0;
   @override
-  Future<void> onRepeatEvent(DateTime timestamp) async {
-    // This is called periodically by the foreground task framework
-    // We're using our own timer for more precise control
-    _calls++;
-    _log.info("Repeated event: $_calls");
+  void onRepeatEvent(DateTime timestamp) {
+    // Unused: eventAction is nothing(). Scheduling is driven by our own timer
+    // (see setupActivityTracking); liveness is tracked in service_heartbeat.log.
   }
 
   @override
