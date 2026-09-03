@@ -2,6 +2,22 @@
 
 Flutter app that captures Nissan Leaf metrics over BLE from an OBD-II dongle.
 
+## Where things go
+
+- **CLAUDE.md** (this file) — build conventions, environment gotchas, and
+  architectural decisions with their reasoning. Read every session, so keep
+  it short. Add something here only when it would change how the next
+  session works.
+- **README.md** — what the project is and how to get started. Introduction,
+  not reasoning.
+- **GitHub issues** — task detail, scope, and acceptance criteria. Also
+  where you report back: comment on the issue with what you did, what you
+  couldn't verify, and anything you skipped or noticed along the way.
+
+Don't file new GitHub issues unprompted. If you notice something outside
+the current scope, note it in the issue comment and I'll decide whether it
+becomes its own issue.
+
 ## Build
 
 Always use `make` targets from the repo root on the host.
@@ -46,3 +62,4 @@ source of truth; a stored flag can only disagree with reality.
 
 **Permission checks belong in the receiver path**, not just at app launch.
 Permissions can be revoked between drives.
+
