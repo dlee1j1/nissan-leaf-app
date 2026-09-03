@@ -21,12 +21,14 @@ becomes its own issue.
 ## Build
 
 Always use `make` targets from the repo root on the host.
-Avoid calling `docker` or `docker-compose` directly if at all possible.
+Avoid calling `docker` or `docker-compose` directly if you can use make. Reason: keep the Makefile relevant. But if you have to look inside, running `docker` or `docker-compose` is valid.   
 
 The Makefile has a catch-all rule that detects whether it's running inside
 the container. From the host, `make <target>` starts the container and
 re-invokes itself inside it. So `make apk`, `make test`, `make analyze`
 all work directly from the Mac.
+
+You don't have rights to git push but go all the way to git commit as necessary in reasonable chunks.
 
 Flutter, the Android SDK, and Gradle exist only inside the container.
 
