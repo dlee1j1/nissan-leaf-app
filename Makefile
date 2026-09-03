@@ -50,10 +50,14 @@ android-engine-shim:
 	esac
 
 # fix permissions to let WSL test runner to work (in addition to the container) 
+# Runs from the container entrypoint, so it must never fail: a recursive chmod
+# over the bind-mounted tree intermittently returns ENOENT ("fts_read failed")
+# on the macOS VirtioFS mount while files churn. Ignore that instead of letting
+# it kill the container.
 fix-permissions:
-	chmod -R go+w .
-	chmod -Rf go+w /opt/flutter/bin/cache/ || true
-	chmod -Rf go+w /opt/flutter/flutter_tools/ || true
+	-chmod -R go+w . 2>/dev/null; true
+	-chmod -Rf go+w /opt/flutter/bin/cache/ 2>/dev/null; true
+	-chmod -Rf go+w /opt/flutter/flutter_tools/ 2>/dev/null; true
 	@echo "Permissions fixed for both WSL and container access"
 
 
