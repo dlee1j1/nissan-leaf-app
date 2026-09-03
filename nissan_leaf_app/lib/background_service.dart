@@ -5,8 +5,9 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:location/location.dart' as loc;
 import 'package:meta/meta.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:simple_logger/simple_logger.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'data_orchestrator.dart';
 
 // Key constants for shared preferences
@@ -61,6 +62,16 @@ class BackgroundService extends TaskHandler implements DataOrchestrator {
     _orchestrator = orchestrator;
   }
 
+  /// Drop the singleton so the next [BackgroundService] call builds a fresh one.
+  /// Tests share this process, and a stale instance carries a pending timer and
+  /// an `_executing` flag into the next test.
+  @visibleForTesting
+  static void resetForTesting() {
+    _instance?._timer?.cancel();
+    _instance?._locationSubscription?.cancel();
+    _instance = null;
+  }
+
   /// Private constructor for singleton pattern
   BackgroundService._internal({
     DataOrchestrator? orchestrator,
@@ -84,31 +95,24 @@ class BackgroundService extends TaskHandler implements DataOrchestrator {
   Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
     try {
       _log.info('Background service started - starter: ${starter.name})');
-
-      // Check if this might be a restart after a crash
-      final prefs = await SharedPreferences.getInstance();
-      final lastShutdownStr = prefs.getString('service_last_shutdown');
+      await _appendHeartbeat('start (${starter.name})');
 
       // Reset state to ensure we start clean
       _executing = false;
 
-      if (lastShutdownStr != null) {
+      // Permissions can be revoked between drives, and the service can now be
+      // started headless by the native receiver - so re-check here rather than
+      // trusting a check that ran at app launch. See issue #3.
+      final missing = await _missingPrerequisites();
+      if (missing.isNotEmpty) {
+        _log.severe('Missing prerequisites, stopping service: ${missing.join(', ')}');
+        await _appendHeartbeat('abort - missing prerequisites: ${missing.join(', ')}');
         try {
-          final lastShutdown = DateTime.parse(lastShutdownStr);
-          if (DateTime.now().difference(lastShutdown).inMinutes < 5) {
-            // This is likely a quick restart - could be a crash recovery
-            _log.warning('Service restarted soon after shutdown - possible crash recovery');
-            // Be more conservative with collection frequency
-            int currentFreq = _baseInterval.inMinutes;
-            if (currentFreq < 5) {
-              _baseInterval = Duration(minutes: 5);
-              _log.info(
-                  'Adjusted base interval to ${_baseInterval.inMinutes} minutes for stability');
-            }
-          }
+          await FlutterForegroundTask.stopService();
         } catch (e) {
-          _log.warning('Error parsing last shutdown time: $e');
+          _log.warning('Error stopping service after failed prerequisite check: $e');
         }
+        return;
       }
 
       // Set up location service if on mobile
@@ -166,6 +170,44 @@ class BackgroundService extends TaskHandler implements DataOrchestrator {
           accuracy: loc.LocationAccuracy.balanced, distanceFilter: LOCATION_DISTANCE_FILTER);
     } catch (e) {
       _log.severe('Error setting up location-based collection: $e');
+    }
+  }
+
+  /// Prerequisites the service needs to do useful work. Returns the list of
+  /// missing ones (empty when everything required is granted).
+  Future<List<String>> _missingPrerequisites() async {
+    if (kIsWeb) return const [];
+    final missing = <String>[];
+
+    Future<void> check(String label, Permission permission) async {
+      try {
+        if (!await permission.isGranted) missing.add(label);
+      } catch (e) {
+        _log.warning('Error checking $label permission: $e');
+      }
+    }
+
+    await check('notifications', Permission.notification);
+    await check('bluetoothConnect', Permission.bluetoothConnect);
+    await check('bluetoothScan', Permission.bluetoothScan);
+    await check('location', Permission.location);
+    return missing;
+  }
+
+  /// Append a timestamped line to the heartbeat log so a completed drive can be
+  /// confirmed after the fact (the only verification available without a rig).
+  Future<void> _appendHeartbeat(String note) async {
+    if (kIsWeb) return;
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final file = File('${dir.path}/service_heartbeat.log');
+      await file.writeAsString(
+        '${DateTime.now().toIso8601String()} $note\n',
+        mode: FileMode.append,
+        flush: true,
+      );
+    } catch (e) {
+      _log.warning('Failed to append heartbeat: $e');
     }
   }
 
@@ -307,6 +349,9 @@ class BackgroundService extends TaskHandler implements DataOrchestrator {
       }
 
       computeStats(trigger);
+      // Fire-and-forget: the heartbeat is a diagnostic side-channel and must not
+      // extend the _executing critical section or shift collection timing.
+      unawaited(_appendHeartbeat('cycle trigger=${trigger.name} success=$_lastCollectionSuccess'));
       await setupActivityTracking();
     } catch (e, stackTrace) {
       _log.severe('Fatal error in background service execute: $e\n$stackTrace');
@@ -373,11 +418,8 @@ class BackgroundService extends TaskHandler implements DataOrchestrator {
   @override
   Future<void> onDestroy(DateTime timestamp) async {
     _log.info('Background service being destroyed');
+    await _appendHeartbeat('stop');
     try {
-      // Save any persistent state that might be needed on restart
-      final prefs = await SharedPreferences.getInstance();
-      prefs.setString('service_last_shutdown', DateTime.now().toIso8601String());
-
       // Clean up resources
       dispose();
     } catch (e, stackTrace) {

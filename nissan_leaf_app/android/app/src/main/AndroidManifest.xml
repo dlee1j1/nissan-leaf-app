@@ -21,6 +21,19 @@
             android:foregroundServiceType="location|dataSync"
             android:enabled="true"
         />
+        <!-- Starts/stops the foreground service from the OBD dongle's BLE
+             connection. ACL_CONNECTED/DISCONNECTED are exempt from the implicit
+             broadcast restrictions, so this works with no live process. See
+             issue #3. -->
+        <receiver
+            android:name=".ObdConnectionReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.bluetooth.device.action.ACL_CONNECTED" />
+                <action android:name="android.bluetooth.device.action.ACL_DISCONNECTED" />
+            </intent-filter>
+        </receiver>
         <activity
             android:name=".MainActivity"
             android:exported="true"

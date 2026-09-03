@@ -131,7 +131,9 @@ class BackgroundServiceController {
         ),
         foregroundTaskOptions: ForegroundTaskOptions(
           eventAction: ForegroundTaskEventAction.repeat(60 * 1000),
-          autoRunOnBoot: true,
+          // No boot behaviour: the dongle's BLE presence is the only trigger.
+          // See the Decisions section in CLAUDE.md and issue #3.
+          autoRunOnBoot: false,
           allowWifiLock: false,
         ),
       );

@@ -3,10 +3,13 @@ CONTAINER_NAME=flutter_dev
 
 # Most targets run inside the container so run docker-compose and exec to run make inside if not in the container
 ifneq ($(shell [ -f /.dockerenv ] && echo 1),1)
-# This is the host environment
-%: 
-	@echo "Running '$@' inside container..." 
-	docker-compose up -d && docker-compose exec -T $(CONTAINER_NAME) make $@
+# This is the host environment.
+# FILE/NAME are forwarded so `make test-one FILE=... NAME=...` reaches the inner
+# make (command-line vars are exported into the recipe environment by make, then
+# `-e` hands them to the container).
+%:
+	@echo "Running '$@' inside container..."
+	docker-compose up -d && docker-compose exec -T -e FILE -e NAME $(CONTAINER_NAME) make $@
 else
 # Flutter section - this stuff runs inside the container
 
@@ -71,9 +74,16 @@ test: $(TEST_TIMESTAMP)
 $(TEST_TIMESTAMP): $(DART_FILES)
 	@echo "Changes detected, running tests..."
 	cd nissan_leaf_app && flutter test && touch ../$(TEST_TIMESTAMP)
-force-test: 
+force-test:
 	rm -f $(TEST_TIMESTAMP)
 	$(MAKE) test
+
+# Run a single test file, optionally filtered by test name. Does not touch the
+# timestamp, so `make test` still re-runs the full suite afterwards.
+#   make test-one FILE=test/background_service_test.dart
+#   make test-one FILE=test/background_service_test.dart NAME='Heartbeat and prerequisites'
+test-one:
+	cd nissan_leaf_app && flutter test $(FILE) $(if $(NAME),--plain-name "$(NAME)")
 
 
 check-adb:
@@ -85,6 +95,11 @@ check-adb:
 
 analyze:
 	cd nissan_leaf_app && flutter analyze | grep -v "info •"
+
+# Same, but keeps the "info" lints that `analyze` filters out. Use when you need
+# the full picture for the files you just touched.
+analyze-full:
+	cd nissan_leaf_app && flutter analyze
 
 linux:  test # doesn't work due to issues with bluetooth and X inside the container. maybe it will work in a linux environment? 
 	cd nissan_leaf_app && flutter run -d linux
