@@ -75,16 +75,25 @@ This separation allows:
 
 ## Service Lifecycle
 
-- **The dongle's BLE presence is the source of truth.** There is no persisted
-  "service enabled" flag and no boot receiver — a manifest receiver is registered
-  from the package, so it already survives reboots without a live process.
-- **No watchdog or restart logic.** `android:stopWithTask="true"` on the
+This is the canonical record of the "why" behind the design; there is
+deliberately nothing about it in `CLAUDE.md`.
+
+- **Let Android kill it.** Random death after hours, while surviving when
+  freshly started, is the OS reclaiming resources — not a crash. So there is
+  **no watchdog and no restart logic**: `android:stopWithTask="true"` on the
   foreground service turns off flutter_foreground_task's restart machinery (the
   5-second `RestartReceiver` alarm, the task-swipe alarm, `START_STICKY`). If
-  Android kills the service mid-drive it stays dead until the next connection;
-  fighting that is a losing battle against OEM battery managers.
+  Android kills the service mid-drive it stays dead until the next connection.
+  Chasing that is a treadmill against every OEM battery manager.
+- **The dongle's BLE presence is the source of truth.** No persisted "service
+  enabled" flag (it could only disagree with reality) and no boot receiver — a
+  manifest receiver is registered from the package, so it already survives
+  reboots without a live process.
 - **`eventAction` is `nothing()`.** Scheduling is driven by `BackgroundService`'s
   own timer; the plugin's periodic `onRepeatEvent` wakeup is unused.
+- **Revisit the model only if `service_heartbeat.log` shows missed or truncated
+  drives.** That is the signal that "let it die" is actually costing data; short
+  of it, resist adding reliability machinery.
 
 ## Key Components
 
