@@ -191,7 +191,11 @@ few cycles before the next success resets the counter.
 Known gap (out of scope, issue #13): a genuinely flaky dongle could rack up 5
 failures *while still driving* and stop the service with no way to restart it
 until the next connection. If real drives show that in `service_heartbeat.log`,
-gate the self-terminate on movement (Activity Recognition `IN_VEHICLE`).
+gate the self-terminate on a "still in the car" check — best signal is whether
+the Leaf's Bluetooth (`MY LEAF`) is still connected, since that is the same
+classic-BT link we trust to start on; a cheap fallback is "no successful
+collection in the last ~10 minutes". (Not `ActivityRecognition` — its
+`IN_VEHICLE` is too laggy and unreliable to gate on.)
 
 ## Sessions and Continuity
 
