@@ -1,13 +1,13 @@
 # Background Data Collection System
 
-The Background Service architecture handles automated data collection from the vehicle's OBD system. Metrics are only interesting while driving, and the OBD dongle appears on Bluetooth when the car powers on — so collection is tied to that connection rather than run continuously. A manifest-declared broadcast receiver starts the foreground service when the dongle connects and stops it when the dongle disconnects; nothing runs in between, so there is nothing for Android to reclaim.
+The Background Service architecture handles automated data collection from the vehicle's OBD system. Metrics are only interesting while driving, so collection is tied to a Bluetooth signal that means "you're in the car" rather than run continuously. A manifest-declared broadcast receiver starts the foreground service when the phone connects to the Leaf's Bluetooth (or to the OBD dongle) and stops it on disconnect; nothing runs in between, so there is nothing for Android to reclaim.
 
 *[Return to main documentation](../README.md)*
 
 ## Architecture Overview
 
 ```
-   car powers on  →  OBD dongle appears on BLE
+   car powers on  →  phone reconnects to "MY LEAF" (and the OBD dongle)
                           │
               ┌───────────▼────────────┐   native, manifest-declared;
               │  ObdConnectionReceiver  │   runs with no live Dart process
@@ -42,8 +42,13 @@ The background functionality is implemented as three distinct components:
 1. **ObdConnectionReceiver** (native Kotlin) - the lifecycle trigger:
    - Manifest-declared `BroadcastReceiver` on `ACTION_ACL_CONNECTED` /
      `ACTION_ACL_DISCONNECTED` — delivered even when no app process is alive
-   - Recognises the dongle by saved MAC (written after the first in-app connect)
-     or a name hint, then starts / stops the foreground service
+   - Starts / stops the foreground service for a device it recognises: the Leaf
+     head unit by name (default `MY LEAF`), or the OBD dongle by saved MAC
+     (written after the first in-app connect) or name hint (`OBD` / `ELM`)
+   - The head-unit link is classic Bluetooth, which Android auto-reconnects on
+     ignition, so it is the match that actually fires with no app running; the
+     dongle is BLE and Android will not reconnect it on its own. Either way the
+     service does its real work against the dongle once awake.
    - Starts it headless by reusing flutter_foreground_task's own restart path
      (write its service-status pref, then `startForegroundService`), which is why
      the Controller still calls `startService()` once at launch — to persist the
@@ -85,10 +90,16 @@ deliberately nothing about it in `CLAUDE.md`.
   5-second `RestartReceiver` alarm, the task-swipe alarm, `START_STICKY`). If
   Android kills the service mid-drive it stays dead until the next connection.
   Chasing that is a treadmill against every OEM battery manager.
-- **The dongle's BLE presence is the source of truth.** No persisted "service
-  enabled" flag (it could only disagree with reality) and no boot receiver — a
-  manifest receiver is registered from the package, so it already survives
-  reboots without a live process.
+- **A Bluetooth connection is the trigger, not a stored flag.** No persisted
+  "service enabled" flag (it could only disagree with reality) and no boot
+  receiver — a manifest receiver survives reboots without a live process.
+- **Match the Leaf head unit, not just the dongle.** The dongle connection is
+  the literal signal, but it is BLE and Android does not auto-reconnect BLE
+  peripherals — so with nothing running, `ACL_CONNECTED` for the dongle may
+  never fire. The phone↔head-unit link is classic Bluetooth, which the OS *does*
+  reconnect on ignition. The head unit defaults to `MY LEAF`; the app is
+  Leaf-only, so matching that name by substring costs no generality and needs no
+  pairing or config. A renamed head unit falls back to the dongle match.
 - **`eventAction` is `nothing()`.** Scheduling is driven by `BackgroundService`'s
   own timer; the plugin's periodic `onRepeatEvent` wakeup is unused.
 - **Revisit the model only if `service_heartbeat.log` shows missed or truncated
@@ -103,8 +114,9 @@ The native trigger. `ObdConnectionReceiver` is a thin adapter: it pulls the
 action, the `BluetoothDevice`, the `BLUETOOTH_CONNECT` permission state, and the
 saved dongle MAC out of the framework, hands them to `ObdConnectionPolicy.decide`,
 and carries out the result (`START` / `STOP` / `IGNORE`). `ObdConnectionPolicy`
-holds all the branching — dongle matching and the connect/disconnect mapping —
-with no `android.*` imports, so it can be unit-tested directly.
+holds all the branching — `isDriveTrigger` (saved dongle MAC, or a name hint:
+`OBD` / `ELM` / `LEAF`) plus the connect/disconnect mapping — with no `android.*`
+imports, so it can be unit-tested directly.
 
 ### `background_service_controller.dart`
 

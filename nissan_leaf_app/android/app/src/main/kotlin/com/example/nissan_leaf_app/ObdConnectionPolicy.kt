@@ -11,20 +11,22 @@ enum class ObdAction { START, STOP, IGNORE }
 
 object ObdConnectionPolicy {
     /**
-     * Name fragments that identify an OBD dongle - matches BluetoothDeviceManager.
+     * Device-name fragments that mean "a drive is starting":
      *
-     * The name check is only the *fallback*. The reliable path is the saved MAC
-     * (`savedDeviceId`), which BluetoothDeviceManager writes after the first
-     * successful in-app connect. Until that happens - i.e. on a fresh install,
-     * before the user has ever connected from the app - matching is name-only.
+     * - `OBD` / `ELM` — the OBD dongle itself (cheap clones vary). This is only a
+     *   *fallback*; the reliable dongle match is the saved MAC (`savedDeviceId`),
+     *   which BluetoothDeviceManager writes after the first in-app connect.
+     * - `LEAF` — the car's own Bluetooth. The Leaf head unit defaults to
+     *   "MY LEAF", and phone<->head-unit is classic Bluetooth, which Android
+     *   auto-reconnects on ignition — so this is the match that actually fires
+     *   with no app running. Name-only by design: no pairing, no saved MAC, zero
+     *   config. The app is Leaf-only, so hardcoding "LEAF" costs no generality; a
+     *   renamed head unit just falls back to the dongle match.
      *
-     * So if a dongle advertises some name that isn't "OBD"/"ELM" (cheap clones
-     * vary), the very first drive won't auto-start the service; the user has to
-     * open the app and connect once, after which the saved MAC takes over. If
-     * that turns out to bite with real hardware, add the offending name fragment
-     * here (uppercase).
+     * If real hardware advertises something else, add the fragment here
+     * (uppercase).
      */
-    private val NAME_HINTS = listOf("OBD", "ELM")
+    private val NAME_HINTS = listOf("OBD", "ELM", "LEAF")
 
     /**
      * Decide what to do with a Bluetooth ACL connect/disconnect broadcast.
@@ -48,7 +50,7 @@ object ObdConnectionPolicy {
         savedDeviceId: String?,
     ): ObdAction {
         if (!hasBluetoothPermission) return ObdAction.IGNORE
-        if (!isObdDongle(deviceName, deviceAddress, savedDeviceId)) return ObdAction.IGNORE
+        if (!isDriveTrigger(deviceName, deviceAddress, savedDeviceId)) return ObdAction.IGNORE
         return when (action) {
             connectAction -> ObdAction.START
             disconnectAction -> ObdAction.STOP
@@ -56,8 +58,8 @@ object ObdConnectionPolicy {
         }
     }
 
-    /** True when the device is the saved dongle (by address) or looks like one (by name). */
-    fun isObdDongle(name: String?, address: String?, savedDeviceId: String?): Boolean {
+    /** True when the device is the saved dongle (by address) or a known drive-start name. */
+    fun isDriveTrigger(name: String?, address: String?, savedDeviceId: String?): Boolean {
         if (savedDeviceId != null && savedDeviceId.equals(address, ignoreCase = true)) {
             return true
         }
