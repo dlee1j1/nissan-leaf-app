@@ -86,6 +86,9 @@ test-one:
 	cd nissan_leaf_app && flutter test $(FILE) $(if $(NAME),--plain-name "$(NAME)")
 
 
+pub-get:
+	cd nissan_leaf_app && flutter pub get
+
 check-adb:
 	@echo "Checking ADB status..."
 	@which adb > /dev/null || (echo "Error: ADB not found in PATH" && exit 1)
