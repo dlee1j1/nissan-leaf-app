@@ -5,7 +5,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:simple_logger/simple_logger.dart';
-import 'package:location/location.dart' as loc;
 import 'background_service.dart';
 
 /// Wrapper class for FlutterForegroundTask static methods to make testing easier
@@ -160,7 +159,6 @@ class BackgroundServiceController {
       Permission.bluetooth,
       Permission.bluetoothConnect,
       Permission.bluetoothScan,
-      Permission.location,
     ];
 
     for (final permission in permissions) {
@@ -168,13 +166,6 @@ class BackgroundServiceController {
       if (status != PermissionStatus.granted) {
         await permission.request();
       }
-    }
-
-    // Check location permission
-    var locationService = loc.Location();
-    var permissionStatus = await locationService.hasPermission();
-    if (permissionStatus == loc.PermissionStatus.denied) {
-      permissionStatus = await locationService.requestPermission();
     }
 
     // Android 13+, you need to allow notification permission to display foreground service notification.

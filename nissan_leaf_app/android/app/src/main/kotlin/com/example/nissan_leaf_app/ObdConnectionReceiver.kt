@@ -11,10 +11,13 @@ import android.util.Log
 import androidx.core.content.ContextCompat
 
 /**
- * Manifest-declared receiver that ties the foreground service lifecycle to the
- * OBD dongle's BLE connection: the dongle appears when the car powers on and
- * disappears when it powers off, so that is exactly when metrics are worth
- * collecting. See the Decisions section in CLAUDE.md and issue #3.
+ * Manifest-declared receiver that starts the foreground service when the phone
+ * connects to a recognised Bluetooth device on car power-on — the Leaf head unit
+ * ("MY LEAF") or the OBD dongle. See issues #3 and #13.
+ *
+ * Start only. There is no disconnect handler: `BluetoothDeviceManager` drops the
+ * dongle link after every collection cycle, so `ACL_DISCONNECTED` is noise. The
+ * service stops itself after N failed cycles.
  *
  * This class is only the adapter - it pulls values out of the framework, hands
  * them to [ObdConnectionPolicy.decide], and carries out the result. The decision
@@ -40,8 +43,6 @@ class ObdConnectionReceiver : BroadcastReceiver() {
         private const val FGS_ACTION_KEY = "foregroundServiceAction"
         private const val FGS_ACTION_REBOOT =
             "com.pravera.flutter_foreground_task.action.reboot"
-        private const val FGS_ACTION_API_STOP =
-            "com.pravera.flutter_foreground_task.action.api_stop"
         private const val FGS_SERVICE_CLASS =
             "com.pravera.flutter_foreground_task.service.ForegroundService"
 
@@ -53,18 +54,12 @@ class ObdConnectionReceiver : BroadcastReceiver() {
     }
 
     override fun onReceive(context: Context, intent: Intent) {
-        val action = intent.action ?: return
-        if (action != BluetoothDevice.ACTION_ACL_CONNECTED &&
-            action != BluetoothDevice.ACTION_ACL_DISCONNECTED
-        ) {
-            return
-        }
+        if (intent.action != BluetoothDevice.ACTION_ACL_CONNECTED) return
 
         val device = deviceFrom(intent)
         val decision = ObdConnectionPolicy.decide(
-            action = action,
+            action = intent.action,
             connectAction = BluetoothDevice.ACTION_ACL_CONNECTED,
-            disconnectAction = BluetoothDevice.ACTION_ACL_DISCONNECTED,
             hasBluetoothPermission = hasBluetoothConnectPermission(context),
             deviceName = device?.let(::deviceName),
             deviceAddress = device?.address,
@@ -73,13 +68,8 @@ class ObdConnectionReceiver : BroadcastReceiver() {
 
         when (decision) {
             ObdAction.START -> {
-                Log.i(TAG, "OBD dongle connected; starting foreground service")
+                Log.i(TAG, "recognised device connected; starting foreground service")
                 setServiceStatus(context, FGS_ACTION_REBOOT)
-                startForegroundService(context)
-            }
-            ObdAction.STOP -> {
-                Log.i(TAG, "OBD dongle disconnected; stopping foreground service")
-                setServiceStatus(context, FGS_ACTION_API_STOP)
                 startForegroundService(context)
             }
             ObdAction.IGNORE -> Unit

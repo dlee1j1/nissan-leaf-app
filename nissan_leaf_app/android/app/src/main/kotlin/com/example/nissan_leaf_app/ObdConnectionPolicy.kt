@@ -7,7 +7,7 @@ package com.example.nissan_leaf_app
  * pulls the values below out of the framework, calls [decide], and acts on the
  * result.
  */
-enum class ObdAction { START, STOP, IGNORE }
+enum class ObdAction { START, IGNORE }
 
 object ObdConnectionPolicy {
     /**
@@ -29,11 +29,13 @@ object ObdConnectionPolicy {
     private val NAME_HINTS = listOf("OBD", "ELM", "LEAF")
 
     /**
-     * Decide what to do with a Bluetooth ACL connect/disconnect broadcast.
+     * Start the service when a recognised device connects. Disconnects are *not*
+     * a stop signal: `BluetoothDeviceManager` drops the dongle link after every
+     * collection cycle by design, so `ACL_DISCONNECTED` is noise. The service
+     * stops itself after N failed cycles instead (see BackgroundService, #13).
      *
      * @param action the received intent action
      * @param connectAction the ACL "connected" action string
-     * @param disconnectAction the ACL "disconnected" action string
      * @param hasBluetoothPermission whether BLUETOOTH_CONNECT is granted (needed
      *   to trust the device name; without it, ignore)
      * @param deviceName the device's name, or null if unavailable
@@ -43,19 +45,15 @@ object ObdConnectionPolicy {
     fun decide(
         action: String?,
         connectAction: String,
-        disconnectAction: String,
         hasBluetoothPermission: Boolean,
         deviceName: String?,
         deviceAddress: String?,
         savedDeviceId: String?,
     ): ObdAction {
+        if (action != connectAction) return ObdAction.IGNORE
         if (!hasBluetoothPermission) return ObdAction.IGNORE
         if (!isDriveTrigger(deviceName, deviceAddress, savedDeviceId)) return ObdAction.IGNORE
-        return when (action) {
-            connectAction -> ObdAction.START
-            disconnectAction -> ObdAction.STOP
-            else -> ObdAction.IGNORE
-        }
+        return ObdAction.START
     }
 
     /** True when the device is the saved dongle (by address) or a known drive-start name. */

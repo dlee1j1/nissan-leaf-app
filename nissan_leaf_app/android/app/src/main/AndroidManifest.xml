@@ -10,7 +10,6 @@
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <application
         android:label="nissan_leaf_app"
         android:name="${applicationName}"
@@ -18,27 +17,27 @@
         android:enableOnBackInvokedCallback="true">
         <!-- stopWithTask=true turns off flutter_foreground_task's restart
              machinery: no 5s RestartReceiver alarm in onDestroy, no alarm on
-             task-swipe, and START_NOT_STICKY instead of START_STICKY. The
-             dongle's BLE presence is the only trigger (see CLAUDE.md Decisions
-             and issue #3); a mid-drive kill is left dead until the next
-             connection rather than fought with a restart treadmill. -->
+             task-swipe, and START_NOT_STICKY instead of START_STICKY. A
+             Bluetooth connection is the only trigger (see issue #3); a mid-drive
+             kill is left dead until the next connection rather than fought with
+             a restart treadmill. -->
         <service
             android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
-            android:foregroundServiceType="location|dataSync"
+            android:foregroundServiceType="dataSync"
             android:enabled="true"
             android:stopWithTask="true"
         />
-        <!-- Starts/stops the foreground service from the OBD dongle's BLE
-             connection. ACL_CONNECTED/DISCONNECTED are exempt from the implicit
-             broadcast restrictions, so this works with no live process. See
-             issue #3. -->
+        <!-- Starts the foreground service when the phone connects to the Leaf's
+             Bluetooth (or the OBD dongle). ACL_CONNECTED is exempt from the
+             implicit-broadcast restrictions, so this works with no live process.
+             There is no disconnect handler - the service stops itself after N
+             failed collection cycles. See issues #3 and #13. -->
         <receiver
             android:name=".ObdConnectionReceiver"
             android:enabled="true"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.bluetooth.device.action.ACL_CONNECTED" />
-                <action android:name="android.bluetooth.device.action.ACL_DISCONNECTED" />
             </intent-filter>
         </receiver>
         <activity
