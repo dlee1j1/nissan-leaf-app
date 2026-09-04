@@ -1,6 +1,6 @@
 # Background Data Collection System
 
-The Background Service architecture handles automated data collection from the vehicle's OBD system. Metrics are only interesting while driving, so collection is tied to a Bluetooth signal that means "you're in the car" rather than run continuously. A manifest-declared broadcast receiver starts the foreground service when the phone connects to the Leaf's Bluetooth (or to the OBD dongle) and stops it on disconnect; nothing runs in between, so there is nothing for Android to reclaim.
+The Background Service architecture handles automated data collection from the vehicle's OBD system. Metrics are only interesting while driving, so collection is tied to a Bluetooth signal that means "you're in the car" rather than run continuously. A manifest-declared broadcast receiver starts the foreground service when the phone connects to the Leaf's Bluetooth (or to the OBD dongle); the service later stops itself once it can no longer reach the dongle. Nothing runs in between, so there is nothing for Android to reclaim.
 
 *[Return to main documentation](../README.md)*
 
@@ -11,8 +11,8 @@ The Background Service architecture handles automated data collection from the v
                           │
               ┌───────────▼────────────┐   native, manifest-declared;
               │  ObdConnectionReceiver  │   runs with no live Dart process
-              │  + ObdConnectionPolicy  │   ACL_CONNECTED    → start service
-              └───────────┬────────────┘   ACL_DISCONNECTED  → stop service
+              │  + ObdConnectionPolicy  │   ACL_CONNECTED → start service
+              └───────────┬────────────┘   (no stop — service self-terminates)
                           │ startForegroundService()
 ──────────────────────────┼───────────────────────────  Platform API boundary
    ┌───────────────┐      │
@@ -39,12 +39,14 @@ The Background Service architecture handles automated data collection from the v
 
 The background functionality is implemented as three distinct components:
 
-1. **ObdConnectionReceiver** (native Kotlin) - the lifecycle trigger:
-   - Manifest-declared `BroadcastReceiver` on `ACTION_ACL_CONNECTED` /
-     `ACTION_ACL_DISCONNECTED` — delivered even when no app process is alive
-   - Starts / stops the foreground service for a device it recognises: the Leaf
-     head unit by name (default `MY LEAF`), or the OBD dongle by saved MAC
-     (written after the first in-app connect) or name hint (`OBD` / `ELM`)
+1. **ObdConnectionReceiver** (native Kotlin) - the start trigger:
+   - Manifest-declared `BroadcastReceiver` on `ACTION_ACL_CONNECTED` — delivered
+     even when no app process is alive. Start only; no disconnect handling
+     (`BluetoothDeviceManager` drops the dongle link every cycle by design, so
+     disconnect is noise — the service self-terminates instead).
+   - Starts the foreground service for a device it recognises: the Leaf head unit
+     by name (default `MY LEAF`), or the OBD dongle by saved MAC (written after
+     the first in-app connect) or name hint (`OBD` / `ELM`)
    - The head-unit link is classic Bluetooth, which Android auto-reconnects on
      ignition, so it is the match that actually fires with no app running; the
      dongle is BLE and Android will not reconnect it on its own. Either way the
@@ -66,7 +68,8 @@ The background functionality is implemented as three distinct components:
    - Implements the actual data collection logic
    - Re-checks required permissions in `onStart` (they can be revoked between
      drives) and stops the service if any are missing
-   - Manages collection frequency and triggers
+   - Polls at a fixed interval; stops the service after N consecutive failed
+     cycles (see Service Lifecycle / Collection Loop)
    - Orchestrates connection to the vehicle
    - Handles data storage and MQTT publishing
    - Appends a line to `service_heartbeat.log` on start, each collection cycle,
@@ -100,6 +103,12 @@ deliberately nothing about it in `CLAUDE.md`.
   reconnect on ignition. The head unit defaults to `MY LEAF`; the app is
   Leaf-only, so matching that name by substring costs no generality and needs no
   pairing or config. A renamed head unit falls back to the dongle match.
+- **No stop signal, only self-termination.** Disconnect can't be the stop
+  trigger — `BluetoothDeviceManager` drops the dongle link after every collection
+  cycle by design. So the service polls at a fixed interval (the BT connection
+  already established we're in the car — no backoff, no GPS/movement trigger, no
+  `location` dependency) and stops itself after `maxConsecutiveFailures` cycles
+  fail back to back.
 - **`eventAction` is `nothing()`.** Scheduling is driven by `BackgroundService`'s
   own timer; the plugin's periodic `onRepeatEvent` wakeup is unused.
 - **Revisit the model only if `service_heartbeat.log` shows missed or truncated
@@ -110,13 +119,13 @@ deliberately nothing about it in `CLAUDE.md`.
 
 ### `android/.../ObdConnectionReceiver.kt` and `ObdConnectionPolicy.kt`
 
-The native trigger. `ObdConnectionReceiver` is a thin adapter: it pulls the
-action, the `BluetoothDevice`, the `BLUETOOTH_CONNECT` permission state, and the
-saved dongle MAC out of the framework, hands them to `ObdConnectionPolicy.decide`,
-and carries out the result (`START` / `STOP` / `IGNORE`). `ObdConnectionPolicy`
-holds all the branching — `isDriveTrigger` (saved dongle MAC, or a name hint:
-`OBD` / `ELM` / `LEAF`) plus the connect/disconnect mapping — with no `android.*`
-imports, so it can be unit-tested directly.
+The native trigger, and start-only. `ObdConnectionReceiver` is a thin adapter: it
+pulls the action, the `BluetoothDevice`, the `BLUETOOTH_CONNECT` permission state,
+and the saved dongle MAC out of the framework, hands them to
+`ObdConnectionPolicy.decide`, and carries out the result (`START` / `IGNORE`).
+`ObdConnectionPolicy` is `isDriveTrigger` (saved dongle MAC, or a name hint:
+`OBD` / `ELM` / `LEAF`) with no `android.*` imports, so it can be unit-tested
+directly. There is no disconnect handling — see Service Lifecycle.
 
 ### `background_service_controller.dart`
 
@@ -138,26 +147,17 @@ await BackgroundServiceController.stopService();
 
 ### `background_service.dart`
 
-The core `TaskHandler` that runs while the dongle is connected. Features:
+The core `TaskHandler`, running from the moment a recognised Bluetooth device
+connects until it stops itself:
 
 - Implements the `TaskHandler` interface from flutter_foreground_task
-- `onStart`: writes a heartbeat line, re-checks required permissions and stops
-  the service if any are missing, then begins collecting
-- Uses adaptive collection frequency
-- Supports both timer-based and location-based triggers
-- Implements error backoff strategy
-
-```dart
-// How the backoff algorithm works
-Duration computeNextDuration(Duration current, Duration base, bool success) {
-  if (success) {
-    return base; // Reset to normal interval on success
-  } else {
-    // Exponential backoff with maximum limit
-    return (current * 2 < maxDelay) ? current * 2 : maxDelay;
-  }
-}
-```
+- `onStart`: writes a heartbeat line, re-checks required permissions (stops the
+  service if any are missing), then collects once
+- Polls at a **fixed** interval (`_baseInterval`, default 1 minute) — no backoff,
+  because the BT connection already told us we're in the car
+- Counts consecutive failed cycles; at `maxConsecutiveFailures` (5) it writes
+  `stop: N failed cycles` to the heartbeat and calls `stopService()` — the dongle
+  is unreachable, so we've almost certainly parked
 
 ### `data_orchestrator.dart`
 
@@ -174,36 +174,24 @@ The orchestrator is responsible for:
 - Publishing to MQTT (if enabled)
 - Maintaining collection sessions
 
-## Collection Triggers
+## Collection Loop
 
-The service uses two complementary approaches to trigger data collection:
+Once started, the service just polls on a fixed timer — one collection every
+`_baseInterval` (default 1 minute), no adaptation. The earlier design used
+exponential backoff and a GPS/movement trigger to guess whether the car was on;
+the Bluetooth connection answers that now, so both are gone (see issue #13).
 
-1. **Timer-based collection**:
-   - Uses a basic interval (default: 1 minute)
-   - Adapts interval based on success/failure (exponential backoff)
-   - Maximum interval: 30 minutes
+Stopping is failure-driven, not disconnect-driven: `ObdConnectionReceiver` never
+sends a stop, because `BluetoothDeviceManager` drops the dongle link after every
+cycle by design. Instead the service tracks consecutive failed cycles and calls
+`stopService()` at `maxConsecutiveFailures` (5) — ~5 minutes of not being able to
+reach the dongle, i.e. parked. A transient dongle drop mid-drive costs at most a
+few cycles before the next success resets the counter.
 
-2. **Location-based collection**:
-   - Activates when device moves ~1600 meters (about 1 mile)
-   - Triggered when wait time reaches 10 minutes (maxDelayBeforeGPS)
-   - Helps resume collection when returning to vehicle
-
-## Adaptive Collection Algorithm
-
-The service dynamically adjusts collection frequency:
-
-1. Start with base interval (1 minute)
-2. On success: maintain base interval
-3. On failure: double the interval (exponential backoff)
-4. Cap at maximum interval (30 minutes)
-5. At 10-minute interval (maxDelayBeforeGPS), enable location-based triggers
-6. On any success: reset to base interval
-
-This approach balances:
-- Data collection frequency
-- Battery consumption
-- Connection attempts
-- Recovery from temporary failures
+Known gap (out of scope, issue #13): a genuinely flaky dongle could rack up 5
+failures *while still driving* and stop the service with no way to restart it
+until the next connection. If real drives show that in `service_heartbeat.log`,
+gate the self-terminate on movement (Activity Recognition `IN_VEHICLE`).
 
 ## Sessions and Continuity
 
@@ -221,11 +209,10 @@ This allows for logical grouping of data points, making it easier to:
 
 ## Error Handling
 
-The service implements robust error handling:
-
-- Connection failures are tracked
-- Each error increments consecutive failure count
-- Collection automatically resumes when conditions improve
+- A failed collection just logs and schedules the next cycle at the normal
+  interval; one success resets the consecutive-failure counter
+- `maxConsecutiveFailures` failures in a row stops the service (see Collection
+  Loop)
 - MQTT errors are caught and don't prevent local storage
 
 ## Mock Mode
@@ -241,22 +228,8 @@ For testing or when no vehicle is available, a mock mode provides simulated data
 
 To modify collection behavior:
 
-1. **Changing base interval**:
-   ```dart
-   // In BackgroundService
-   void updateCollectionFrequency(int minutes) {
-     _baseInterval = Duration(minutes: minutes);
-   }
-   ```
-
-2. **Adjusting location trigger distance**:
-   ```dart
-   // In background_service.dart, modify:
-   const double LOCATION_DISTANCE_FILTER = 1600.0; // meters (approx 1 mile)
-   ```
-
-3. **Changing maximum delay**:
-   ```dart
-   // In BackgroundService
-   static const Duration maxDelay = Duration(minutes: 30);
-   ```
+1. **Poll interval** — `BackgroundService.updateCollectionFrequency(int minutes)`
+   at runtime, or the `defaultFrequency` constant.
+2. **When it gives up** — `BackgroundService.maxConsecutiveFailures` (default 5).
+3. **What counts as the OBD dongle / the car** — `NAME_HINTS` in
+   `ObdConnectionPolicy.kt`.

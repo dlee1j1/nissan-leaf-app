@@ -16,7 +16,7 @@
   - Manages SQLite storage of readings
 
 - **Background Service System** ([details](../docs/Background_Service_Architecture.md)) (three parts)
-  - **Trigger** (`android/.../ObdConnectionReceiver.kt`, `ObdConnectionPolicy.kt`): a manifest-declared receiver that starts the service when the phone connects to the Leaf's Bluetooth (or the OBD dongle) and stops it on disconnect — so it runs only while driving, with nothing left alive for Android to reclaim
+  - **Trigger** (`android/.../ObdConnectionReceiver.kt`, `ObdConnectionPolicy.kt`): a manifest-declared receiver that starts the service when the phone connects to the Leaf's Bluetooth (or the OBD dongle); the service then stops itself once it can no longer reach the dongle — so it runs only while driving, with nothing left alive for Android to reclaim
   - **Controller** (`lib/background_service_controller.dart`): Manages the foreground service lifecycle, permissions, and Android notification
   - **Service** (`lib/background_service.dart`): Implements the actual background task logic with adaptive collection intervals, a per-drive heartbeat log, and a permission re-check on each start
 
