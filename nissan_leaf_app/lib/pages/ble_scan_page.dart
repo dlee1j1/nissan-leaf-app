@@ -42,7 +42,6 @@ class _BleScanPageState extends State<BleScanPage> {
     await Permission.bluetooth.request();
     await Permission.bluetoothScan.request();
     await Permission.bluetoothConnect.request();
-    await Permission.location.request();
   }
 
   void startScan() async {
