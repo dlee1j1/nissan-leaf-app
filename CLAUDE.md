@@ -18,6 +18,20 @@ Don't file new GitHub issues unprompted. If you notice something outside
 the current scope, note it in the issue comment and I'll decide whether it
 becomes its own issue.
 
+## Conventions
+
+- **Write modules testable without a harness.** Push platform/plugin calls
+  to a thin edge — a wrapper class, an injected interface, a
+  `@visibleForTesting` setter or reset hook — and keep the decision logic
+  in a pure unit. Examples: `ForegroundTaskWrapper` around the
+  `FlutterForegroundTask` statics; `ObdConnectionPolicy` (no `android.*`
+  imports) split out of `ObdConnectionReceiver`; `setOrchestratorForTesting`
+  / `resetForTesting`; platform-interface fakes in tests. Plain `flutter
+  test` and plain-JVM JUnit only — no Robolectric, no emulator.
+- **Docs and tests land with the code.** A behaviour change updates its
+  `nissan_leaf_app/docs/` page and its tests in the same PR, not a
+  follow-up.
+
 ## Build
 
 Always use `make` targets from the repo root on the host.
