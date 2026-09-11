@@ -64,4 +64,29 @@ object ObdConnectionPolicy {
         val upper = name?.uppercase() ?: return false
         return NAME_HINTS.any { upper.contains(it) }
     }
+
+    /**
+     * Formats one line of [ObdConnectionReceiver]'s durable debug log. Pure text
+     * formatting, no I/O - the receiver does the actual file write. Kept here,
+     * next to the decision it describes, so it's testable once #5 sets up a JVM
+     * test lane for this file.
+     *
+     * This log is unconditional - every ACL_CONNECTED the receiver sees gets a
+     * line, IGNORE included, so a name/match bug (e.g. "MY LEAF" not actually
+     * matching) is visible as `decision=IGNORE` rather than looking identical to
+     * "the broadcast never arrived" (see issue #3).
+     */
+    fun formatDebugLine(
+        timestamp: String,
+        deviceName: String?,
+        deviceAddress: String?,
+        hasBluetoothPermission: Boolean,
+        decision: ObdAction,
+        startResult: String? = null,
+    ): String {
+        val device = deviceName ?: deviceAddress ?: "unknown"
+        val base = "$timestamp connected device=\"$device\" btPermission=$hasBluetoothPermission " +
+            "decision=$decision"
+        return if (startResult != null) "$base startResult=$startResult" else base
+    }
 }
