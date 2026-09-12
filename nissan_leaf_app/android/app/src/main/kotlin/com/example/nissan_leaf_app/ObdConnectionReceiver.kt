@@ -71,6 +71,19 @@ class ObdConnectionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != BluetoothDevice.ACTION_ACL_CONNECTED) return
 
+        // isServiceRunning is read here (the platform edge) but handed to
+        // decide() as data, not branched on locally - see that function's doc
+        // for why this particular check is a parameter and not an inline `if`.
+        //
+        // Not atomic with the setServiceStatus/startForegroundService call
+        // below: onReceive relies on Android delivering broadcasts to a given
+        // receiver instance serially (true in practice for a manifest receiver
+        // in one process), not on any lock held across the read and the act.
+        // Two ACL_CONNECTED broadcasts landing genuinely concurrently (e.g.
+        // separate cold-start processes) could both see isServiceRunning=false
+        // and both attempt a start; harmless here (a second REBOOT while one
+        // is already in flight just repeats work), but worth naming since
+        // nothing enforces it.
         val device = deviceFrom(intent)
         val name = device?.let(::deviceName)
         val address = device?.address
@@ -82,30 +95,20 @@ class ObdConnectionReceiver : BroadcastReceiver() {
             deviceName = name,
             deviceAddress = address,
             savedDeviceId = savedDeviceId(context),
+            isServiceRunning = isServiceRunning(context),
         )
 
         val startResult = when (decision) {
             ObdAction.START -> {
-                if (isServiceRunning(context)) {
-                    // Most START connects during a drive are OBDBLE's own
-                    // per-cycle disconnect/reconnect (BluetoothDeviceManager
-                    // drops the dongle link after every collection cycle by
-                    // design - see #13), not a new drive. REBOOT
-                    // unconditionally restarts the Dart isolate, so honouring
-                    // it here killed an in-flight collection roughly every
-                    // minute, all drive long - the receiver_debug.log/
-                    // heartbeat correlation that diagnosed "worked once, then
-                    // didn't" (#3). The service is already alive and runs its
-                    // own timer/self-stop; nothing to do.
-                    Log.i(TAG, "recognised device connected but service already running; ignoring")
-                    "skipped: already running"
-                } else {
-                    Log.i(TAG, "recognised device connected; starting foreground service")
-                    setServiceStatus(context, FGS_ACTION_REBOOT)
-                    val result = startForegroundService(context)
-                    notifyTriggered(context, name ?: address ?: "unknown device")
-                    result
-                }
+                Log.i(TAG, "recognised device connected; starting foreground service")
+                setServiceStatus(context, FGS_ACTION_REBOOT)
+                val result = startForegroundService(context)
+                notifyTriggered(context, name ?: address ?: "unknown device")
+                result
+            }
+            ObdAction.ALREADY_RUNNING -> {
+                Log.i(TAG, "recognised device connected but service already running; ignoring")
+                "skipped: already running"
             }
             ObdAction.IGNORE -> null
         }
