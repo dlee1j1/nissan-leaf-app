@@ -50,6 +50,11 @@ class BluetoothDeviceManager {
   String? _lastErrorMessage;
   int _consecutiveFailures = 0;
   final Map<String, DeviceErrorStats> _deviceErrorStats = {};
+
+  /// Why the most recent scan/connect/collect attempt failed, or null if the
+  /// most recent one succeeded (or nothing has run yet). Cleared at the start
+  /// of [scanForDevices] and on a successful [collectCarData], set at each
+  /// failure point in between - see issue #3.
   String? get lastError => _lastErrorMessage;
   int get consecutiveFailures => _consecutiveFailures;
 
@@ -98,6 +103,9 @@ class BluetoothDeviceManager {
 
     _log.info('Starting Bluetooth scan for devices...');
     _updateStatus(ConnectionStatus.scanning);
+    // Cleared here, not just on failure, so a stale message from a previous
+    // scan can't be misread as the reason for *this* one.
+    _lastErrorMessage = null;
 
     try {
       // Ensure Bluetooth is on
@@ -108,6 +116,7 @@ class BluetoothDeviceManager {
           await _bluetoothService.turnOnBluetooth();
         } catch (e) {
           _log.warning('Could not turn on Bluetooth: $e');
+          _lastErrorMessage = 'Bluetooth unavailable: $e';
           _updateStatus(ConnectionStatus.error, 'Bluetooth unavailable');
           return []; // Return empty list instead of throwing
         }
@@ -124,12 +133,18 @@ class BluetoothDeviceManager {
         _updateStatus(ConnectionStatus.scanComplete);
         return results;
       } catch (e) {
+        // e.g. a platform scan-throttle rejection (Android limits how often an
+        // app may start a scan). Without this, the caller sees the same empty
+        // list as "genuinely nothing in range" - indistinguishable from the
+        // outside. See issue #3.
         _log.warning('Error during device scan: $e');
+        _lastErrorMessage = 'Scan error: $e';
         _updateStatus(ConnectionStatus.error, 'Scan error: $e');
         return []; // Return empty list instead of throwing
       }
     } catch (e) {
       _log.warning('Unexpected error in scanForDevices: $e');
+      _lastErrorMessage = 'Unexpected scan error: $e';
       _updateStatus(ConnectionStatus.error, 'Unexpected error: $e');
       return []; // Return empty list for any error
     }
@@ -298,9 +313,15 @@ class BluetoothDeviceManager {
       // scan is cheap - so start with that
       final results = await scanForDevices(timeout: Duration(seconds: 2));
 
-      // If no devices at all, bail out early
+      // If no devices at all, bail out early. scanForDevices already set
+      // _lastErrorMessage if the scan itself errored (e.g. platform
+      // scan-throttle) - only fall back to the generic message when it
+      // didn't, so we don't overwrite a more specific reason with a vaguer
+      // one. Otherwise "scan was rejected" and "genuinely nothing in range"
+      // are indistinguishable from here on. See issue #3.
       if (results.isEmpty) {
-        _log.info('No Bluetooth devices in range, skipping connection attempts');
+        _lastErrorMessage ??= 'No Bluetooth devices in range';
+        _log.info('${_lastErrorMessage!}, skipping connection attempts');
         return false;
       }
 
@@ -350,8 +371,10 @@ class BluetoothDeviceManager {
         }
       }
 
+      _lastErrorMessage = 'Found ${potentialDevices.length} device(s) but none matched as OBD';
       _log.warning('No valid OBD devices found after scanning');
     } catch (e) {
+      _lastErrorMessage = 'Auto-connection error: $e';
       _log.warning('Auto-connection error: $e');
     }
 
@@ -365,10 +388,13 @@ class BluetoothDeviceManager {
       try {
         bool connected = await autoConnectToObd();
         if (!connected) {
+          // autoConnectToObd already set _lastErrorMessage with the specific
+          // reason (no devices in range, scan error, no OBD match, ...).
           _log.warning('Failed to connect to OBD device, cannot collect data');
           return null;
         }
       } catch (e) {
+        _lastErrorMessage = 'Error connecting to OBD device: $e';
         _log.warning('Error connecting to OBD device: $e');
         return null;
       }
@@ -380,11 +406,14 @@ class BluetoothDeviceManager {
       final rangeData = await OBDCommand.rangeRemaining.run();
 
       if (batteryData.isEmpty) {
+        _lastErrorMessage = 'OBD device returned no battery data';
         return null;
       }
 
+      _lastErrorMessage = null; // this cycle succeeded
       return {...batteryData, ...rangeData, 'timestamp': DateTime.now().millisecondsSinceEpoch};
     } catch (e) {
+      _lastErrorMessage = 'Error collecting data: $e';
       _log.severe('Error collecting data: $e');
       return null;
     } finally {

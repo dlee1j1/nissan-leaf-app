@@ -62,6 +62,10 @@ class OBDConnector {
   /// Returns true if currently connected to an OBD device.
   bool get isConnected => _deviceManager.isConnected;
 
+  /// Why the most recent [collectCarData]/[autoConnectToObd] attempt failed,
+  /// or null if it succeeded (or hasn't run yet).
+  String? get lastError => _deviceManager.lastError;
+
   /// Stream of connection status updates.
   Stream<ConnectionStatus> get connectionStatus => _deviceManager.connectionStatus;
 
