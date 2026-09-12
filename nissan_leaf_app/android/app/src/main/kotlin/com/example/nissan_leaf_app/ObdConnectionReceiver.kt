@@ -1,6 +1,7 @@
 package com.example.nissan_leaf_app
 
 import android.Manifest
+import android.app.ActivityManager
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.bluetooth.BluetoothDevice
@@ -85,11 +86,26 @@ class ObdConnectionReceiver : BroadcastReceiver() {
 
         val startResult = when (decision) {
             ObdAction.START -> {
-                Log.i(TAG, "recognised device connected; starting foreground service")
-                setServiceStatus(context, FGS_ACTION_REBOOT)
-                val result = startForegroundService(context)
-                notifyTriggered(context, name ?: address ?: "unknown device")
-                result
+                if (isServiceRunning(context)) {
+                    // Most START connects during a drive are OBDBLE's own
+                    // per-cycle disconnect/reconnect (BluetoothDeviceManager
+                    // drops the dongle link after every collection cycle by
+                    // design - see #13), not a new drive. REBOOT
+                    // unconditionally restarts the Dart isolate, so honouring
+                    // it here killed an in-flight collection roughly every
+                    // minute, all drive long - the receiver_debug.log/
+                    // heartbeat correlation that diagnosed "worked once, then
+                    // didn't" (#3). The service is already alive and runs its
+                    // own timer/self-stop; nothing to do.
+                    Log.i(TAG, "recognised device connected but service already running; ignoring")
+                    "skipped: already running"
+                } else {
+                    Log.i(TAG, "recognised device connected; starting foreground service")
+                    setServiceStatus(context, FGS_ACTION_REBOOT)
+                    val result = startForegroundService(context)
+                    notifyTriggered(context, name ?: address ?: "unknown device")
+                    result
+                }
             }
             ObdAction.IGNORE -> null
         }
@@ -120,6 +136,19 @@ class ObdConnectionReceiver : BroadcastReceiver() {
         return ContextCompat.checkSelfPermission(
             context, Manifest.permission.BLUETOOTH_CONNECT
         ) == PackageManager.PERMISSION_GRANTED
+    }
+
+    /**
+     * As of Android O, [ActivityManager.getRunningServices] only reports the
+     * caller's own services (per its docs) - that's exactly what's needed here
+     * and holds on every version this app targets, unlike its use for
+     * inspecting other apps' services.
+     */
+    private fun isServiceRunning(context: Context): Boolean {
+        val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        @Suppress("DEPRECATION")
+        return activityManager.getRunningServices(Int.MAX_VALUE)
+            .any { it.service.className == FGS_SERVICE_CLASS }
     }
 
     private fun setServiceStatus(context: Context, action: String) {
