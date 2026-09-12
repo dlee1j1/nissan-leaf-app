@@ -114,6 +114,16 @@ apk:  android-engine-shim test
 	cd nissan_leaf_app && flutter build apk --release
 	mv nissan_leaf_app/build/app/outputs/flutter-apk/app-release.apk nissan-leaf-app.apk
 
+# Debuggable build for pulling on-device app files via `adb run-as` (e.g.
+# service_heartbeat.log, receiver_debug.log) without the release-build
+# `debuggable=true` hack that crashes on launch (SIGABRT / SELinux `map`
+# denial on flutter_assets - the manifest flag and the AOT/JIT mismatch don't
+# mix). Same debug signing config as release, so `adb install -r` over
+# either variant preserves app data - reinstall the release apk afterward.
+debug-apk: android-engine-shim
+	cd nissan_leaf_app && flutter build apk --debug
+	mv nissan_leaf_app/build/app/outputs/flutter-apk/app-debug.apk nissan-leaf-app-debug.apk
+
 web:  test
 	cd nissan_leaf_app && flutter run -d web-server --web-hostname=0.0.0.0 --web-port=8080
 
