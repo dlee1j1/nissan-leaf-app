@@ -73,7 +73,12 @@ The background functionality is implemented as three distinct components:
    - Orchestrates connection to the vehicle
    - Handles data storage and MQTT publishing
    - Appends a line to `service_heartbeat.log` on start, each collection cycle,
-     and stop — the only way to confirm a drive was captured without a rig
+     and stop — the only way to confirm a drive was captured without a rig.
+     A failed cycle's line includes `reason=<...>` when the orchestrator can
+     say why (no devices in range, a scan error, no OBD match, an empty
+     probe response, etc.) — otherwise a scan that came back empty because
+     of e.g. a platform scan-throttle rejection looks identical to
+     "genuinely nothing in range" (see issue #3).
 
 This separation allows:
 - Clean isolation of platform-specific code
