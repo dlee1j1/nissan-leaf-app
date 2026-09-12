@@ -46,12 +46,6 @@ android {
             // Signing with the debug keys for now, so `flutter run --release` works.
             signingConfig = signingConfigs.debug
 //            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
-
-            // TEMPORARY - issue #3 diagnostics only. debuggable=true is what lets
-            // `adb run-as` read files/receiver_debug.log off a release-mode
-            // (AOT-compiled) build without changing its timing/behaviour. Revert
-            // before this branch's diagnostics wrap up.
-            debuggable true
         }
     }
 }
