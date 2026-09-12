@@ -158,7 +158,20 @@ void main() {
     bluetoothHelper = BluetoothServiceTestHelper();
     manager = BluetoothDeviceManager.instance;
     manager.setBluetoothServiceForTesting(bluetoothHelper.mock);
-    manager.setObdControllerFactoryForTesting((params) => MockObdController(params));
+    // MockObdController's single positional param is a canned response
+    // string (see mock_obd_controller.dart) - unrelated to what a real
+    // ObdController takes (the BluetoothCharacteristic connectToDevice hands
+    // the factory). Passing `params` straight through crashed with "type
+    // 'MockBluetoothCharacteristic' is not a subtype of type 'String'" the
+    // instant any test's connectToDevice() reached this factory - which was
+    // *every* test that got past service/characteristic discovery, silently
+    // funneling them all into the wrong catch block. Most tests never
+    // noticed because they use OBDCommand.setTestRunOverride, which bypasses
+    // this controller's responses entirely - but it meant no test in this
+    // file could actually reach a real probe call, including the ones named
+    // for exactly that. A real (non-error) response so tests that don't set
+    // an override still get a normal decode() path instead of "NO DATA".
+    manager.setObdControllerFactoryForTesting((params) => MockObdController('7EC 03 62 11 56 04'));
 
     // Initialize manager - permissions will be automatically skipped in test environment
     // since it's neither Android nor iOS
@@ -255,6 +268,42 @@ void main() {
 
       // Assert
       bluetoothHelper.verifyConnectionAttemptedFor(mockDevice);
+    });
+
+    test('connectToDevice succeeds end-to-end when the probe gets a response', () async {
+      bluetoothHelper.setupSuccessfulConnection(mockDevice);
+      bluetoothHelper.setupSuccessfulServiceDiscovery(mockDevice, [mockService]);
+
+      final result = await manager.connectToDevice(mockDevice);
+
+      expect(result, true);
+      expect(manager.isConnected, true);
+    });
+
+    test('autoConnectToObd does not re-probe once connectToDevice already succeeded', () async {
+      // connectToDevice() already probes the vehicle bus as part of
+      // connecting. autoConnectToObd() used to probe again immediately
+      // afterward, sending the same diagnostic-session command to the car's
+      // ECU twice back to back - the bug behind "found the dongle every
+      // cycle, never got data" (#3). Regression guard: exactly one probe per
+      // successful connect.
+      MockObdController? createdController;
+      manager.setObdControllerFactoryForTesting((params) {
+        createdController = MockObdController('7EC 03 62 11 56 04');
+        return createdController!;
+      });
+      bluetoothHelper.setupBluetoothOn();
+      bluetoothHelper.setupSuccessfulScan([mockScanResult]);
+      bluetoothHelper.setupSuccessfulConnection(mockDevice);
+      bluetoothHelper.setupSuccessfulServiceDiscovery(mockDevice, [mockService]);
+
+      final result = await manager.autoConnectToObd();
+
+      expect(result, true);
+      expect(
+        createdController!.sentCommands.where((c) => c == OBDCommand.probe.command).length,
+        1,
+      );
     });
 
     test('autoConnectToObd should exit early when no devices found', () async {
