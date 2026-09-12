@@ -73,6 +73,9 @@ class BackgroundService extends TaskHandler implements DataOrchestrator {
   Stream<Map<String, dynamic>> get statusStream => _orchestrator.statusStream;
 
   @override
+  String? get lastFailureReason => _orchestrator.lastFailureReason;
+
+  @override
   Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
     try {
       _log.info('Background service started - starter: ${starter.name}');
@@ -208,7 +211,13 @@ class BackgroundService extends TaskHandler implements DataOrchestrator {
       computeStats(trigger);
       // Fire-and-forget: the heartbeat is a diagnostic side-channel and must not
       // extend the _executing critical section or shift collection timing.
-      unawaited(_appendHeartbeat('cycle trigger=${trigger.name} success=$_lastCollectionSuccess'));
+      var note = 'cycle trigger=${trigger.name} success=$_lastCollectionSuccess';
+      if (!_lastCollectionSuccess && _orchestrator.lastFailureReason != null) {
+        // Distinguishes e.g. "scan came back empty because of a platform
+        // scan-throttle error" from "genuinely nothing in range" - see #3.
+        note += ' reason=${_orchestrator.lastFailureReason}';
+      }
+      unawaited(_appendHeartbeat(note));
 
       if (_lastCollectionSuccess) {
         _consecutiveFailures = 0;

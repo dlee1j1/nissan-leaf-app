@@ -1,6 +1,9 @@
 package com.example.nissan_leaf_app
 
 import android.Manifest
+import android.app.ActivityManager
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.bluetooth.BluetoothDevice
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -8,7 +11,10 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.util.Log
+import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import java.io.File
+import java.time.LocalDateTime
 
 /**
  * Manifest-declared receiver that starts the foreground service when the phone
@@ -51,29 +57,62 @@ class ObdConnectionReceiver : BroadcastReceiver() {
         // BluetoothDeviceManager when it connects to a dongle.
         private const val FLUTTER_PREFS = "FlutterSharedPreferences"
         private const val SAVED_DEVICE_ID_KEY = "flutter.obd_device_id"
+
+        // Diagnostic instrumentation for issue #3 - the receiver ran when the app
+        // manually worked, so the open question is whether/what this fires with
+        // no live process. Durable so it survives a drive with no laptop
+        // attached: pull with `adb exec-out run-as com.example.nissan_leaf_app
+        // cat files/receiver_debug.log`.
+        private const val DEBUG_LOG_FILE = "receiver_debug.log"
+        private const val DEBUG_NOTIFICATION_CHANNEL = "obd_connection_debug"
+        private const val DEBUG_NOTIFICATION_ID = 9001
     }
 
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != BluetoothDevice.ACTION_ACL_CONNECTED) return
 
+        // isServiceRunning is read here (the platform edge) but handed to
+        // decide() as data, not branched on locally - see that function's doc
+        // for why this particular check is a parameter and not an inline `if`.
+        //
+        // Not atomic with the setServiceStatus/startForegroundService call
+        // below: onReceive relies on Android delivering broadcasts to a given
+        // receiver instance serially (true in practice for a manifest receiver
+        // in one process), not on any lock held across the read and the act.
+        // Two ACL_CONNECTED broadcasts landing genuinely concurrently (e.g.
+        // separate cold-start processes) could both see isServiceRunning=false
+        // and both attempt a start; harmless here (a second REBOOT while one
+        // is already in flight just repeats work), but worth naming since
+        // nothing enforces it.
         val device = deviceFrom(intent)
+        val name = device?.let(::deviceName)
+        val address = device?.address
+        val hasPermission = hasBluetoothConnectPermission(context)
         val decision = ObdConnectionPolicy.decide(
             action = intent.action,
             connectAction = BluetoothDevice.ACTION_ACL_CONNECTED,
-            hasBluetoothPermission = hasBluetoothConnectPermission(context),
-            deviceName = device?.let(::deviceName),
-            deviceAddress = device?.address,
+            hasBluetoothPermission = hasPermission,
+            deviceName = name,
+            deviceAddress = address,
             savedDeviceId = savedDeviceId(context),
+            isServiceRunning = isServiceRunning(context),
         )
 
-        when (decision) {
+        val startResult = when (decision) {
             ObdAction.START -> {
                 Log.i(TAG, "recognised device connected; starting foreground service")
                 setServiceStatus(context, FGS_ACTION_REBOOT)
-                startForegroundService(context)
+                val result = startForegroundService(context)
+                notifyTriggered(context, name ?: address ?: "unknown device")
+                result
             }
-            ObdAction.IGNORE -> Unit
+            ObdAction.ALREADY_RUNNING -> {
+                Log.i(TAG, "recognised device connected but service already running; ignoring")
+                "skipped: already running"
+            }
+            ObdAction.IGNORE -> null
         }
+        appendDebugLog(context, name, address, hasPermission, decision, startResult)
     }
 
     private fun deviceFrom(intent: Intent): BluetoothDevice? =
@@ -102,6 +141,19 @@ class ObdConnectionReceiver : BroadcastReceiver() {
         ) == PackageManager.PERMISSION_GRANTED
     }
 
+    /**
+     * As of Android O, [ActivityManager.getRunningServices] only reports the
+     * caller's own services (per its docs) - that's exactly what's needed here
+     * and holds on every version this app targets, unlike its use for
+     * inspecting other apps' services.
+     */
+    private fun isServiceRunning(context: Context): Boolean {
+        val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        @Suppress("DEPRECATION")
+        return activityManager.getRunningServices(Int.MAX_VALUE)
+            .any { it.service.className == FGS_SERVICE_CLASS }
+    }
+
     private fun setServiceStatus(context: Context, action: String) {
         // commit(), not apply() - the service reads this in another process
         // immediately after startForegroundService() below.
@@ -111,15 +163,80 @@ class ObdConnectionReceiver : BroadcastReceiver() {
             .commit()
     }
 
-    private fun startForegroundService(context: Context) {
+    /** @return "ok", or "failed: &lt;exception&gt;" for the debug log. */
+    private fun startForegroundService(context: Context): String {
         val intent = Intent().setClassName(context.packageName, FGS_SERVICE_CLASS)
-        try {
+        return try {
             ContextCompat.startForegroundService(context, intent)
+            "ok"
         } catch (e: Exception) {
             // e.g. ForegroundServiceStartNotAllowedException if the OS denies a
-            // background FGS start. Nothing sensible to do here but log it; the
-            // heartbeat log will show the missed drive.
+            // background FGS start. Nothing sensible to do here but log/record
+            // it; the debug log will show the missed drive.
             Log.e(TAG, "Failed to start foreground service", e)
+            "failed: ${e.javaClass.simpleName}: ${e.message}"
+        }
+    }
+
+    /** Unconditional, durable record of every ACL_CONNECTED this receiver sees. */
+    private fun appendDebugLog(
+        context: Context,
+        deviceName: String?,
+        deviceAddress: String?,
+        hasPermission: Boolean,
+        decision: ObdAction,
+        startResult: String?,
+    ) {
+        try {
+            val line = ObdConnectionPolicy.formatDebugLine(
+                timestamp = LocalDateTime.now().toString(),
+                deviceName = deviceName,
+                deviceAddress = deviceAddress,
+                hasBluetoothPermission = hasPermission,
+                decision = decision,
+                startResult = startResult,
+            )
+            File(context.filesDir, DEBUG_LOG_FILE).appendText("$line\n")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to append receiver debug log", e)
+        }
+    }
+
+    /**
+     * Visible, at-a-glance confirmation for a recognised trigger only (not every
+     * device - that would fire for earbuds, a watch, etc.). An ordinary
+     * notification, not a foreground-service one, so it has none of the
+     * background-start restrictions that startForegroundService above is
+     * subject to; it firing is proof the broadcast reached the app at all.
+     */
+    private fun notifyTriggered(context: Context, deviceLabel: String) {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+                PackageManager.PERMISSION_GRANTED
+            ) {
+                return
+            }
+            val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                manager.createNotificationChannel(
+                    NotificationChannel(
+                        DEBUG_NOTIFICATION_CHANNEL,
+                        "Drive trigger detected",
+                        NotificationManager.IMPORTANCE_DEFAULT,
+                    )
+                )
+            }
+            val notification = NotificationCompat.Builder(context, DEBUG_NOTIFICATION_CHANNEL)
+                .setSmallIcon(context.applicationInfo.icon)
+                .setContentTitle("Leaf BT trigger fired")
+                .setContentText("$deviceLabel connected; starting drive logging")
+                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+                .setAutoCancel(true)
+                .build()
+            manager.notify(DEBUG_NOTIFICATION_ID, notification)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to post debug notification", e)
         }
     }
 }

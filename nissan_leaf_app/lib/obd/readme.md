@@ -44,6 +44,8 @@ final data = await connector.collectCarData();
 ### `bluetooth_device_manager.dart`
 
 Manages Bluetooth device discovery, connection, and communication. Handles retry logic and error recovery.
+`connectToDevice()` only reports success once `OBDCommand.probe` gets a non-empty response - a BLE-level connection
+isn't enough on its own to mean the vehicle bus is actually answering (see Troubleshooting below).
 
 ### `obd_controller.dart`
 
@@ -129,6 +131,18 @@ Common issues:
    ```
 
 4. **Timeouts**: Increase the timeout value in the `ObdController` if commands take too long
+
+5. **`probe` is a real vehicle command, not a self-test**: `OBDCommand.probe`
+   (header `797`, command `0210C0 1`) is a diagnostic-session-shaped command
+   sent to the car's BMS ECU, used to confirm the vehicle bus - not just the
+   BLE link - is actually answering. Don't call it twice back to back (e.g.
+   once to validate a connection, then again to double-check) - a real ECU
+   may not answer the same session-control-shaped request the same way
+   twice in quick succession, and BLE-level "connected" plus an
+   immediately-repeated probe was observed to reliably produce an empty
+   response on the second call even though the dongle and vehicle were both
+   fine (issue #3). `connectToDevice()` is the only place that should call
+   it per connection attempt.
 
 ## Model Year Differences
 

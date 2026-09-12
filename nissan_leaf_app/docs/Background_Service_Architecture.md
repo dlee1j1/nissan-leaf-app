@@ -73,7 +73,12 @@ The background functionality is implemented as three distinct components:
    - Orchestrates connection to the vehicle
    - Handles data storage and MQTT publishing
    - Appends a line to `service_heartbeat.log` on start, each collection cycle,
-     and stop — the only way to confirm a drive was captured without a rig
+     and stop — the only way to confirm a drive was captured without a rig.
+     A failed cycle's line includes `reason=<...>` when the orchestrator can
+     say why (no devices in range, a scan error, no OBD match, an empty
+     probe response, etc.) — otherwise a scan that came back empty because
+     of e.g. a platform scan-throttle rejection looks identical to
+     "genuinely nothing in range" (see issue #3).
 
 This separation allows:
 - Clean isolation of platform-specific code
@@ -121,11 +126,40 @@ deliberately nothing about it in `CLAUDE.md`.
 
 The native trigger, and start-only. `ObdConnectionReceiver` is a thin adapter: it
 pulls the action, the `BluetoothDevice`, the `BLUETOOTH_CONNECT` permission state,
-and the saved dongle MAC out of the framework, hands them to
-`ObdConnectionPolicy.decide`, and carries out the result (`START` / `IGNORE`).
-`ObdConnectionPolicy` is `isDriveTrigger` (saved dongle MAC, or a name hint:
-`OBD` / `ELM` / `LEAF`) with no `android.*` imports, so it can be unit-tested
-directly. There is no disconnect handling — see Service Lifecycle.
+whether the foreground service is currently running, and the saved dongle MAC
+out of the framework, hands them to `ObdConnectionPolicy.decide`, and carries
+out the result (`START` / `ALREADY_RUNNING` / `IGNORE`). `ObdConnectionPolicy`
+is `isDriveTrigger` (saved dongle MAC, or a name hint: `OBD` / `ELM` / `LEAF`)
+with no `android.*` imports, so it can be unit-tested directly (pending #5's
+JVM test lane). There is no disconnect handling — see Service Lifecycle.
+
+`isServiceRunning` is deliberately a parameter to `decide`, not a check the
+receiver makes and branches on by itself — see the doc comment on `decide` in
+`ObdConnectionPolicy.kt`. It was originally the latter (added, then fixed as a
+follow-up in the same issue): every recognised-device connect restarted the
+service unconditionally, including the dongle's own per-cycle reconnect, which
+restarted the Dart isolate roughly every minute for the whole drive. Nobody
+had written a test asserting what should happen when the service is already
+running, because nobody had modelled it as a question `decide` needed to
+answer — an unmodelled precondition, not a wrong answer to a modelled one, so
+no test on the original code would have caught it. Pulling it out as an
+explicit parameter with a named outcome (`ALREADY_RUNNING`) is what makes that
+case something a test can pin down going forward.
+
+**Untested assumptions**, in the same category as the `NAME_HINTS` substring
+match above — plausible, unverified, and would fail silently if wrong:
+- The saved-MAC match (`isDriveTrigger`) assumes `flutter.obd_device_id`
+  (`BluetoothDeviceManager`, via flutter_blue_plus's `remoteId.str`) and native
+  `BluetoothDevice.address` are byte-for-byte comparable modulo case. A
+  flutter_blue_plus upgrade that changes its address string format would break
+  this match without any error - the device would just stop being recognised.
+- `onReceive` isn't synchronized against itself: the `isServiceRunning` read
+  and the `startForegroundService` call aren't atomic, relying instead on
+  Android delivering broadcasts to one receiver instance serially. Two
+  `ACL_CONNECTED` broadcasts landing genuinely concurrently (e.g. separate
+  cold-start processes) could both see "not running" and both start - harmless
+  today (a redundant REBOOT just repeats work) but not something anything
+  enforces.
 
 ### `background_service_controller.dart`
 

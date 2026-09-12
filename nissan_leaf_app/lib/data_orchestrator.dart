@@ -16,6 +16,13 @@ abstract class DataOrchestrator {
   Stream<Map<String, dynamic>> get statusStream;
   Future<bool> collectData();
   void dispose();
+
+  /// Why the most recent [collectData] call returned false, or null if it
+  /// succeeded (or hasn't run yet). Surfaced into the background service's
+  /// heartbeat log so e.g. a BLE scan that came back empty because of a
+  /// platform scan-throttle error is distinguishable from "genuinely nothing
+  /// in range" - from the outside they used to look identical. See issue #3.
+  String? get lastFailureReason;
 }
 
 /// Orchestrator that connects directly to OBD (Debug Mode)
@@ -53,6 +60,9 @@ class DirectOBDOrchestrator implements DataOrchestrator {
 
   @override
   Stream<Map<String, dynamic>> get statusStream => _statusController.stream;
+
+  @override
+  String? get lastFailureReason => _obdConnector.lastError;
 
   final SingleFlight<bool> _collectGuard = SingleFlight<bool>();
   @override
@@ -169,6 +179,9 @@ class MockDataOrchestrator implements DataOrchestrator {
 
   @override
   Stream<Map<String, dynamic>> get statusStream => _statusController.stream;
+
+  @override
+  String? get lastFailureReason => null; // mock data collection never fails
 
   @override
   Future<bool> collectData() async {
