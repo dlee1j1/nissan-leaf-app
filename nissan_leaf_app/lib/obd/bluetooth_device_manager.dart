@@ -236,8 +236,14 @@ class BluetoothDeviceManager {
       // Set controller for OBD commands
       OBDCommand.setObdController(_obdController!);
 
-      // Test connection with probe command
-      await OBDCommand.probe.run();
+      // Test connection with probe command. probe is a real command to the
+      // vehicle's BMS ECU (header 797), not a benign ELM327 self-test - an
+      // empty response means the dongle answered but the vehicle bus didn't,
+      // which is exactly as unusable as a thrown exception here.
+      final probeResult = await OBDCommand.probe.run();
+      if (probeResult.isEmpty) {
+        throw Exception('Probe returned empty response');
+      }
 
       // Save device info for future reconnection
       await _saveDeviceInfo(device);
@@ -346,32 +352,24 @@ class BluetoothDeviceManager {
         return 0;
       });
 
-      // Try to connect to each device and test initialization
+      // Try to connect to each device. connectToDevice already probes the
+      // vehicle bus as part of connecting (including rejecting an empty
+      // response) - re-probing here used to send the same diagnostic-session
+      // command to the car's ECU a second time back to back, which a real
+      // vehicle ECU may not answer the same way twice in a row. See #3: this
+      // redundant probe is the leading suspect for "found the dongle every
+      // cycle, never actually got data".
       for (var result in potentialDevices) {
         _log.info('Attempting connection to ${result.device.platformName}');
-
-        // Attempt connection
         if (await connectToDevice(result.device)) {
-          // Test if we can successfully run a probe command
-          try {
-            // Just use the command's run() method directly
-            var probeResult = await OBDCommand.probe.run();
-
-            // If we get any response, we likely have a valid OBD device
-            if (probeResult.isNotEmpty) {
-              _log.info('Successfully connected to OBD device: ${result.device.platformName}');
-              return true;
-            } else {
-              _log.info('Device responded but returned empty probe result, trying next device');
-            }
-            await disconnect();
-          } catch (e) {
-            _log.info('Device failed OBD probe test: $e');
-          }
+          _log.info('Successfully connected to OBD device: ${result.device.platformName}');
+          return true;
         }
+        // connectToDevice already logged/recorded the specific reason
+        // (_lastErrorMessage) and disconnected; try the next candidate.
       }
 
-      _lastErrorMessage = 'Found ${potentialDevices.length} device(s) but none matched as OBD';
+      _lastErrorMessage ??= 'Found ${potentialDevices.length} device(s) but none matched as OBD';
       _log.warning('No valid OBD devices found after scanning');
     } catch (e) {
       _lastErrorMessage = 'Auto-connection error: $e';
