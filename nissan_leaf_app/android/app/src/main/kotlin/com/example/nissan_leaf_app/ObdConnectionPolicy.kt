@@ -12,13 +12,17 @@ enum class ObdAction {
     START,
 
     /**
-     * A recognised device connected, but the service is already running - most
-     * often OBDBLE's own per-cycle disconnect/reconnect (BluetoothDeviceManager
-     * drops the dongle link after every collection cycle by design, see #13),
-     * not a new drive. `startForegroundService`'s REBOOT action unconditionally
-     * restarts the Dart isolate, so honouring this killed an in-flight
-     * collection roughly every minute, all drive long - the bug #3 turned out
-     * to be. No-op: the service is alive and runs its own timer/self-stop.
+     * A recognised device connected, but the service is already running - not
+     * a new drive. `startForegroundService`'s REBOOT action unconditionally
+     * restarts the Dart isolate, so honouring this would kill an in-flight
+     * collection. This was originally discovered because OBDBLE reconnected
+     * on *every* collection cycle by design, restarting the service roughly
+     * every minute, all drive long - the bug #3 turned out to be.
+     * `BluetoothDeviceManager` no longer disconnects on a successful cycle
+     * (#17), so that specific churn is much rarer now, but the guard stays:
+     * a failed cycle still disconnects and reconnects, and `MY LEAF` can
+     * reconnect mid-drive too. No-op: the service is alive and runs its own
+     * timer/self-stop.
      */
     ALREADY_RUNNING,
 
@@ -47,10 +51,13 @@ object ObdConnectionPolicy {
 
     /**
      * Start the service when a recognised device connects and it isn't already
-     * running. Disconnects are *not* a stop signal: `BluetoothDeviceManager`
-     * drops the dongle link after every collection cycle by design, so
-     * `ACL_DISCONNECTED` is noise. The service stops itself after N failed
-     * cycles instead (see BackgroundService, #13).
+     * running. Disconnects are *not* a stop signal - the receiver was never
+     * given an `ACL_DISCONNECTED` filter to begin with (#13/#14), and that
+     * stands even now that a disconnect means something again (a failed
+     * cycle - `BluetoothDeviceManager` stays connected across successful ones
+     * since #17). The service stops itself after N failed cycles instead
+     * (see BackgroundService, #13), which reacts to the same signal but
+     * debounced rather than on the first blip.
      *
      * `isServiceRunning` is an explicit parameter, not a check the receiver
      * makes on the side, specifically so this truth table is what gets tested

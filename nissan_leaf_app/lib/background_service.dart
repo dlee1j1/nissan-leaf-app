@@ -21,11 +21,14 @@ enum TriggerType {
 ///
 /// Lifecycle is driven from the native side: `ObdConnectionReceiver` starts the
 /// service when a recognised Bluetooth device connects (the Leaf head unit or
-/// the OBD dongle). There is no disconnect-based stop — the collection flow
-/// drops the dongle link every cycle by design. Instead the service stops
-/// itself once [maxConsecutiveFailures] cycles have failed back to back, which
-/// means the dongle is unreachable and we are almost certainly parked. See
-/// issue #13.
+/// the OBD dongle). There is no disconnect-based stop. A successful cycle
+/// keeps the dongle link open for the next one (see #17); a failed cycle
+/// drops it, but the receiver never subscribed to `ACL_DISCONNECTED` (#13/#14
+/// - a bare drop mid-drive was noise back when every cycle produced one).
+/// Reacting to a single disconnect now would mean the same thing, just
+/// undebounced - the service instead stops itself once
+/// [maxConsecutiveFailures] cycles have failed back to back, which means the
+/// dongle is unreachable and we are almost certainly parked. See issue #13.
 class BackgroundService extends TaskHandler implements DataOrchestrator {
   static BackgroundService? _instance;
 

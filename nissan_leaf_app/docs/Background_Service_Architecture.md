@@ -41,9 +41,10 @@ The background functionality is implemented as three distinct components:
 
 1. **ObdConnectionReceiver** (native Kotlin) - the start trigger:
    - Manifest-declared `BroadcastReceiver` on `ACTION_ACL_CONNECTED` — delivered
-     even when no app process is alive. Start only; no disconnect handling
-     (`BluetoothDeviceManager` drops the dongle link every cycle by design, so
-     disconnect is noise — the service self-terminates instead).
+     even when no app process is alive. Start only; no disconnect handling -
+     never was one to begin with, and it stays that way even though
+     `BluetoothDeviceManager` no longer drops the dongle link every cycle
+     (only on a failed one, see #17) - the service self-terminates instead.
    - Starts the foreground service for a device it recognises: the Leaf head unit
      by name (default `MY LEAF`), or the OBD dongle by saved MAC (written after
      the first in-app connect) or name hint (`OBD` / `ELM`)
@@ -108,12 +109,14 @@ deliberately nothing about it in `CLAUDE.md`.
   reconnect on ignition. The head unit defaults to `MY LEAF`; the app is
   Leaf-only, so matching that name by substring costs no generality and needs no
   pairing or config. A renamed head unit falls back to the dongle match.
-- **No stop signal, only self-termination.** Disconnect can't be the stop
-  trigger — `BluetoothDeviceManager` drops the dongle link after every collection
-  cycle by design. So the service polls at a fixed interval (the BT connection
-  already established we're in the car — no backoff, no GPS/movement trigger, no
-  `location` dependency) and stops itself after `maxConsecutiveFailures` cycles
-  fail back to back.
+- **No stop signal, only self-termination.** The receiver was never given a
+  disconnect trigger, and that stays true even though disconnect means
+  something again post-#17 (a failed cycle, not every cycle) - the
+  `maxConsecutiveFailures` counter already reacts to that same signal, just
+  debounced across several cycles instead of the first blip. So the service
+  polls at a fixed interval (the BT connection already established we're in
+  the car — no backoff, no GPS/movement trigger, no `location` dependency)
+  and stops itself after `maxConsecutiveFailures` cycles fail back to back.
 - **`eventAction` is `nothing()`.** Scheduling is driven by `BackgroundService`'s
   own timer; the plugin's periodic `onRepeatEvent` wakeup is unused.
 - **Revisit the model only if `service_heartbeat.log` shows missed or truncated
@@ -215,12 +218,16 @@ Once started, the service just polls on a fixed timer — one collection every
 exponential backoff and a GPS/movement trigger to guess whether the car was on;
 the Bluetooth connection answers that now, so both are gone (see issue #13).
 
-Stopping is failure-driven, not disconnect-driven: `ObdConnectionReceiver` never
-sends a stop, because `BluetoothDeviceManager` drops the dongle link after every
-cycle by design. Instead the service tracks consecutive failed cycles and calls
-`stopService()` at `maxConsecutiveFailures` (5) — ~5 minutes of not being able to
-reach the dongle, i.e. parked. A transient dongle drop mid-drive costs at most a
-few cycles before the next success resets the counter.
+Stopping is failure-driven, not disconnect-driven: `ObdConnectionReceiver`
+never sends a stop - it was never given an `ACL_DISCONNECTED` filter, and
+that's still the right call even though a disconnect isn't guaranteed noise
+anymore (`BluetoothDeviceManager` only drops the link on a failed cycle now,
+not every cycle - see #17). The service tracks consecutive failed cycles
+instead and calls `stopService()` at `maxConsecutiveFailures` (5) — ~5 minutes
+of not being able to reach the dongle, i.e. parked. A transient dongle drop
+mid-drive costs at most a few cycles (each one now paying a fresh
+scan+connect+probe round-trip, since the failure disconnected it) before the
+next success resets the counter and settles back into a held-open connection.
 
 Known gap (out of scope, issue #13): a genuinely flaky dongle could rack up 5
 failures *while still driving* and stop the service with no way to restart it

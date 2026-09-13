@@ -164,6 +164,12 @@ class DirectOBDOrchestrator implements DataOrchestrator {
 
   @override
   void dispose() {
+    // Best-effort - a cycle now stays connected on success (#17), so an
+    // intentional stop while connected should hand the link back cleanly.
+    // Fire-and-forget: dispose() is sync (called from Flutter State.dispose()
+    // elsewhere, which can't await), and if the process is dying anyway the
+    // OS reclaims the BLE GATT connection regardless.
+    unawaited(_obdConnector.disconnect());
     _statusController.close();
   }
 }

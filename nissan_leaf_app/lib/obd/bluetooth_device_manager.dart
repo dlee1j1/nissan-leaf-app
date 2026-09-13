@@ -387,7 +387,8 @@ class BluetoothDeviceManager {
         bool connected = await autoConnectToObd();
         if (!connected) {
           // autoConnectToObd already set _lastErrorMessage with the specific
-          // reason (no devices in range, scan error, no OBD match, ...).
+          // reason (no devices in range, scan error, no OBD match, ...) and
+          // already disconnected on its own failure path.
           _log.warning('Failed to connect to OBD device, cannot collect data');
           return null;
         }
@@ -398,25 +399,33 @@ class BluetoothDeviceManager {
       }
     }
 
+    // Deliberately no `finally { disconnect(); }` here (see #17) - a
+    // successful cycle stays connected so the *next* cycle can skip the
+    // scan+connect+probe round-trip entirely via the `if (!isConnected)`
+    // check above. Re-entrancy is guarded elsewhere (collectData()'s
+    // SingleFlight, autoConnectToObd()'s SingleFlight, connectToDevice()'s
+    // _isConnecting), not by this method always tearing the link down.
+    // Disconnect deliberately on failure - a broken command is reason enough
+    // to distrust this connection and force a clean reconnect next time,
+    // and it's what turns a live OBDBLE link back into an ACL_DISCONNECTED
+    // the receiver could someday act on (it doesn't yet - see #13).
     try {
-      // Collect data using existing commands
       final batteryData = await OBDCommand.lbc.run();
       final rangeData = await OBDCommand.rangeRemaining.run();
 
       if (batteryData.isEmpty) {
         _lastErrorMessage = 'OBD device returned no battery data';
+        await disconnect();
         return null;
       }
 
-      _lastErrorMessage = null; // this cycle succeeded
+      _lastErrorMessage = null; // this cycle succeeded - stay connected
       return {...batteryData, ...rangeData, 'timestamp': DateTime.now().millisecondsSinceEpoch};
     } catch (e) {
       _lastErrorMessage = 'Error collecting data: $e';
       _log.severe('Error collecting data: $e');
-      return null;
-    } finally {
-      // always disconnect
       await disconnect();
+      return null;
     }
   }
 

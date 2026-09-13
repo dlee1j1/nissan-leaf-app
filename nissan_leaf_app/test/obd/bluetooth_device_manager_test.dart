@@ -207,6 +207,19 @@ void main() {
         allowLongWrite: false, timeout: 15, withoutResponse: false)).thenAnswer((_) async {});
   });
 
+  // BluetoothDeviceManager is a real singleton (`.instance`), not rebuilt
+  // per test, so a test that leaves it connected - which is now the normal
+  // outcome of a successful cycle, see #17 - would otherwise leak
+  // _connectedDevice/_obdController into whichever test runs next. Before
+  // #17, collectCarData()'s unconditional disconnect masked this: every
+  // test ended disconnected as a side effect of production code, regardless
+  // of whether anything here reset it on purpose. Now that production code
+  // legitimately stays connected on success, test isolation has to be
+  // explicit instead of riding on that.
+  tearDown(() async {
+    await manager.disconnect();
+  });
+
   group('BluetoothDeviceManager Basic Functionality', () {
     test('scanForDevices turns on Bluetooth if it is off', () {
       runWithFakeAsync((fake) async {
@@ -531,6 +544,49 @@ void main() {
 
       // Assert - should disconnect despite the error
       bluetoothHelper.verifyDisconnectionFrom(mockDevice);
+    });
+  });
+
+  group('Connection Reuse Across Cycles (#17)', () {
+    setUp(() {
+      OBDCommand.setTestRunOverride((cmd) async {
+        if (cmd == OBDCommand.lbc) return {'stateOfCharge': 80};
+        return {'raw_response': 'ok'};
+      });
+    });
+
+    tearDown(() {
+      OBDCommand.setTestRunOverride(null);
+    });
+
+    test('a successful cycle stays connected instead of disconnecting', () async {
+      bluetoothHelper.setupBluetoothOn();
+      bluetoothHelper.setupSuccessfulScan([mockScanResult]);
+      bluetoothHelper.setupSuccessfulConnection(mockDevice);
+      bluetoothHelper.setupSuccessfulServiceDiscovery(mockDevice, [mockService]);
+
+      final result = await manager.collectCarData();
+
+      expect(result, isNotNull);
+      expect(manager.isConnected, true);
+      verifyNever(() => bluetoothHelper.mock.disconnectDevice(mockDevice));
+    });
+
+    test('a second cycle on an already-connected device skips scan/connect entirely', () async {
+      bluetoothHelper.setupBluetoothOn();
+      bluetoothHelper.setupSuccessfulScan([mockScanResult]);
+      bluetoothHelper.setupSuccessfulConnection(mockDevice);
+      bluetoothHelper.setupSuccessfulServiceDiscovery(mockDevice, [mockService]);
+
+      final first = await manager.collectCarData();
+      expect(first, isNotNull);
+
+      final second = await manager.collectCarData();
+
+      expect(second, isNotNull);
+      // Only the first cycle should have needed to scan/connect - see #17.
+      bluetoothHelper.verifyScanAttempted();
+      verify(() => bluetoothHelper.mock.connectToDevice(mockDevice)).called(1);
     });
   });
 }
