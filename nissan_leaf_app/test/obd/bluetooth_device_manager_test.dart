@@ -154,9 +154,12 @@ void main() {
     // Set up mock preferences storage
     SharedPreferences.setMockInitialValues({});
 
-    // Initialize test helper and manager
+    // Initialize test helper and manager. A fresh instance per test (not
+    // .instance) - see #9/class doc - so nothing from a previous test's
+    // connection state can leak in, without needing to enumerate every
+    // field a shared instance might carry over.
     bluetoothHelper = BluetoothServiceTestHelper();
-    manager = BluetoothDeviceManager.instance;
+    manager = BluetoothDeviceManager();
     manager.setBluetoothServiceForTesting(bluetoothHelper.mock);
     // MockObdController's single positional param is a canned response
     // string (see mock_obd_controller.dart) - unrelated to what a real
@@ -205,19 +208,6 @@ void main() {
     // Mock successful write operations
     when(() => mockCharacteristic.write(any(),
         allowLongWrite: false, timeout: 15, withoutResponse: false)).thenAnswer((_) async {});
-  });
-
-  // BluetoothDeviceManager is a real singleton (`.instance`), not rebuilt
-  // per test, so a test that leaves it connected - which is now the normal
-  // outcome of a successful cycle, see #17 - would otherwise leak
-  // _connectedDevice/_obdController into whichever test runs next. Before
-  // #17, collectCarData()'s unconditional disconnect masked this: every
-  // test ended disconnected as a side effect of production code, regardless
-  // of whether anything here reset it on purpose. Now that production code
-  // legitimately stays connected on success, test isolation has to be
-  // explicit instead of riding on that.
-  tearDown(() async {
-    await manager.disconnect();
   });
 
   group('BluetoothDeviceManager Basic Functionality', () {

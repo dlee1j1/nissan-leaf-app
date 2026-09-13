@@ -17,12 +17,20 @@ const SERVICE_UUID = "0000ffe0-0000-1000-8000-00805f9b34fb";
 // ignore: constant_identifier_names
 const CHARACTERISTIC_UUID = "0000ffe1-0000-1000-8000-00805f9b34fb";
 
-/// A singleton manager class that handles all Bluetooth operations for OBD connectivity
+/// Manages all Bluetooth operations for OBD connectivity.
+///
+/// A plain, normally-constructible class - not a baked-in singleton. [instance]
+/// is a global accessor over the app's one real instance, shared by its two
+/// production call sites (`OBDConnector`, `DashboardPage`); it's convenience,
+/// not a constraint. Tests construct their own via `BluetoothDeviceManager()`
+/// directly, so each test starts from genuinely clean state instead of
+/// needing to remember to reset every field a shared instance might carry
+/// over from the previous test (see #9, which did the same for
+/// BackgroundService - this class had the identical problem).
 class BluetoothDeviceManager {
-  // Singleton pattern
-  static final BluetoothDeviceManager _instance = BluetoothDeviceManager._internal();
-  static BluetoothDeviceManager get instance => _instance;
-  BluetoothDeviceManager._internal();
+  BluetoothDeviceManager();
+
+  static final BluetoothDeviceManager instance = BluetoothDeviceManager();
 
   // Allow dependency injection for testing
   BluetoothServiceInterface _bluetoothService = FlutterBluetoothService();
