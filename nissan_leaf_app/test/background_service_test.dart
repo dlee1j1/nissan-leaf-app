@@ -61,6 +61,10 @@ void main() {
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
     mockOrchestrator = MockDirectOBDOrchestrator();
+    // Default stub - most tests don't care about the connection state
+    // (see #20's isConnected follow-up), just that _statusSnapshot() can
+    // read it without a MissingStubError/null-cast on a fresh mock.
+    when(() => mockOrchestrator.isConnected).thenReturn(false);
     registerFallbackValue(<String, dynamic>{});
     registerFallbackValue(DateTime.now());
   });
@@ -202,6 +206,20 @@ void main() {
       expect(reply['type'], 'status');
       expect(reply.containsKey('running'), isTrue);
       expect(reply.containsKey('executing'), isTrue);
+      expect(reply.containsKey('connected'), isTrue);
+    });
+
+    test('getStatus reports the real dongle connection, not just service-alive', () {
+      // The distinction this whole follow-up exists for (#20): the service
+      // can be running with the dongle currently disconnected (#17).
+      when(() => mockOrchestrator.isConnected).thenReturn(true);
+      backgroundService.onReceiveData({'command': 'getStatus'});
+      expect((sentMessages.single as Map)['connected'], true);
+
+      sentMessages.clear();
+      when(() => mockOrchestrator.isConnected).thenReturn(false);
+      backgroundService.onReceiveData({'command': 'getStatus'});
+      expect((sentMessages.single as Map)['connected'], false);
     });
 
     test('refreshNow runs a real collection and replies with the result', () async {

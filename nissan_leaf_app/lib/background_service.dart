@@ -111,6 +111,12 @@ class BackgroundService extends TaskHandler implements DataOrchestrator {
   String? get lastFailureReason => _orchestrator.lastFailureReason;
 
   @override
+  bool get isConnected => _orchestrator.isConnected;
+
+  @override
+  Future<void> refreshStatus() async {} // isConnected is already live here
+
+  @override
   Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
     try {
       _log.info('Background service started - starter: ${starter.name}');
@@ -356,6 +362,12 @@ class BackgroundService extends TaskHandler implements DataOrchestrator {
         'lastTrigger': _lastTrigger.name,
         'lastCollectionSuccess': _lastCollectionSuccess,
         'consecutiveFailures': _consecutiveFailures,
+        // The actual dongle link, not just "is the service alive" - these
+        // diverge for long stretches between a failed cycle's disconnect
+        // and the next reconnect attempt (#17). See the isConnected doc on
+        // DataOrchestrator for why this needs to travel in the message
+        // rather than being asked for synchronously.
+        'connected': _orchestrator.isConnected,
       };
 
   void _handleRefreshNow() {

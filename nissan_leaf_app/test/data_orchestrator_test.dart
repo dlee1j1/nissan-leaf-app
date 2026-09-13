@@ -438,5 +438,42 @@ void main() {
       expect(result, false);
       expect(orchestrator.lastFailureReason, contains('No reading available'));
     });
+
+    test('isConnected defaults to false and updates from a refreshNow reply', () async {
+      final orchestrator = buildOrchestrator(isRunning: true);
+      when(() => mockDb.getMostRecentReading()).thenAnswer((_) async => null);
+      expect(orchestrator.isConnected, false);
+
+      final resultFuture = orchestrator.collectData();
+      await Future.delayed(Duration.zero);
+      registeredCallbacks.single({'type': 'refreshResult', 'success': true, 'connected': true});
+      await resultFuture;
+
+      expect(orchestrator.isConnected, true);
+    });
+
+    test('refreshStatus asks for status without running a collection', () async {
+      final orchestrator = buildOrchestrator(isRunning: true);
+
+      final refreshFuture = orchestrator.refreshStatus();
+      await Future.delayed(Duration.zero);
+      expect(sentCommands, [
+        {'command': 'getStatus'}
+      ]);
+      registeredCallbacks.single({'type': 'status', 'connected': true});
+      await refreshFuture;
+
+      expect(orchestrator.isConnected, true);
+      verifyNever(() => mockDb.getMostRecentReading());
+    });
+
+    test('refreshStatus reports disconnected without asking when the service is not running', () async {
+      final orchestrator = buildOrchestrator(isRunning: false);
+
+      await orchestrator.refreshStatus();
+
+      expect(orchestrator.isConnected, false);
+      expect(sentCommands, isEmpty);
+    });
   });
 }

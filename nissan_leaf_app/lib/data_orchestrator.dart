@@ -24,6 +24,20 @@ abstract class DataOrchestrator {
   /// platform scan-throttle error is distinguishable from "genuinely nothing
   /// in range" - from the outside they used to look identical. See issue #3.
   String? get lastFailureReason;
+
+  /// Whether the OBD dongle is connected right now. A live fact for
+  /// DirectOBDOrchestrator (it holds the connection). For
+  /// BackgroundServiceOrchestrator, which can't synchronously ask a
+  /// different isolate, this is a best-effort value cached from the last
+  /// status/refresh round trip - call [refreshStatus] to update it without
+  /// triggering a real collection. Distinct from "is the service running"
+  /// (#20): the service can be alive for long stretches between a failed
+  /// cycle's disconnect and the next reconnect attempt (#17).
+  bool get isConnected;
+
+  /// Best-effort refresh of [isConnected] without running a real collection
+  /// cycle. A no-op for orchestrators where [isConnected] is already live.
+  Future<void> refreshStatus();
 }
 
 /// Orchestrator that connects directly to OBD (Debug Mode)
@@ -64,6 +78,12 @@ class DirectOBDOrchestrator implements DataOrchestrator {
 
   @override
   String? get lastFailureReason => _obdConnector.lastError;
+
+  @override
+  bool get isConnected => _obdConnector.isConnected;
+
+  @override
+  Future<void> refreshStatus() async {} // isConnected is already live
 
   final SingleFlight<bool> _collectGuard = SingleFlight<bool>();
   @override
@@ -194,6 +214,12 @@ class BackgroundServiceOrchestrator implements DataOrchestrator {
   final _log = SimpleLogger();
   String? _lastFailureReason;
 
+  // Best-effort, cached from the last status/refresh reply - this isolate
+  // can't synchronously ask another one whether the dongle is connected
+  // (#20). Defaults to false: assume disconnected until told otherwise,
+  // rather than defaulting to a possibly-stale "connected".
+  bool _connected = false;
+
   // Injectable for testing - these are static plugin calls that can't be
   // mocked directly.
   final Future<bool> Function() _isServiceRunning;
@@ -220,6 +246,24 @@ class BackgroundServiceOrchestrator implements DataOrchestrator {
 
   @override
   String? get lastFailureReason => _lastFailureReason;
+
+  @override
+  bool get isConnected => _connected;
+
+  @override
+  Future<void> refreshStatus() async {
+    if (!await _isServiceRunning()) {
+      _connected = false;
+      return;
+    }
+    // Short timeout - this is meant to be a cheap, frequent check (app
+    // resume, mode switch, ...), not something the UI should ever visibly
+    // wait on the way it might tolerate waiting on a real collection.
+    final reply = await _requestAndAwaitReply('getStatus', 'status', timeout: const Duration(seconds: 5));
+    if (reply != null && reply.containsKey('connected')) {
+      _connected = reply['connected'] == true;
+    }
+  }
 
   @override
   Future<bool> collectData() async {
@@ -257,28 +301,42 @@ class BackgroundServiceOrchestrator implements DataOrchestrator {
   }
 
   /// Sends `refreshNow` and awaits the matching `refreshResult` reply.
-  /// Timeout-guarded rather than awaiting forever - a hung real service (see
-  /// the zombie-isolate discussion on #3) should mean this returns false
-  /// after a while, not that the UI hangs too.
-  Future<bool> _requestRefresh() {
-    final completer = Completer<bool>();
-    late DataCallback onData;
-    final timeout = Timer(const Duration(seconds: 20), () {
+  Future<bool> _requestRefresh() async {
+    final reply = await _requestAndAwaitReply('refreshNow', 'refreshResult');
+    if (reply == null) {
       _lastFailureReason = 'Timed out waiting for the background service';
+      return false;
+    }
+    if (reply.containsKey('connected')) _connected = reply['connected'] == true;
+    final success = reply['success'] == true;
+    if (!success) _lastFailureReason = reply['reason']?.toString() ?? 'Refresh failed';
+    return success;
+  }
+
+  /// Sends [command] to the task and awaits a reply whose `type` matches
+  /// [replyType], or null on timeout. Timeout-guarded rather than awaiting
+  /// forever - a hung real service (see the zombie-isolate discussion on
+  /// #3) should mean this gives up, not that the UI hangs too.
+  Future<Map<String, dynamic>?> _requestAndAwaitReply(
+    String command,
+    String replyType, {
+    Duration timeout = const Duration(seconds: 20),
+  }) {
+    final completer = Completer<Map<String, dynamic>?>();
+    late DataCallback onData;
+    final timer = Timer(timeout, () {
       _removeTaskDataCallback(onData);
-      if (!completer.isCompleted) completer.complete(false);
+      if (!completer.isCompleted) completer.complete(null);
     });
 
     onData = (Object data) {
-      if (data is! Map || data['type'] != 'refreshResult') return;
-      timeout.cancel();
+      if (data is! Map || data['type'] != replyType) return;
+      timer.cancel();
       _removeTaskDataCallback(onData);
-      final success = data['success'] == true;
-      if (!success) _lastFailureReason = data['reason']?.toString() ?? 'Refresh failed';
-      if (!completer.isCompleted) completer.complete(success);
+      if (!completer.isCompleted) completer.complete(Map<String, dynamic>.from(data));
     };
     _addTaskDataCallback(onData);
-    _sendDataToTask({'command': 'refreshNow'});
+    _sendDataToTask({'command': command});
 
     return completer.future;
   }
@@ -303,6 +361,12 @@ class MockDataOrchestrator implements DataOrchestrator {
 
   @override
   String? get lastFailureReason => null; // mock data collection never fails
+
+  @override
+  bool get isConnected => true; // mock mode has no real dongle to be connected to
+
+  @override
+  Future<void> refreshStatus() async {}
 
   @override
   Future<bool> collectData() async {

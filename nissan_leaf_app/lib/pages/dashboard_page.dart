@@ -78,11 +78,17 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   bool _isLoadingHistory = false;
   String? _errorMessage;
 
-  // Whether the real background service is currently running - not a live
-  // BLE connection state. The dashboard never holds its own
-  // BluetoothDeviceManager (see #20); "connected" isn't a concept it can
-  // observe directly any more, only "is there a service to ask."
+  // Whether the real background service is currently running - not the
+  // same thing as whether the dongle is connected. The dashboard never
+  // holds its own BluetoothDeviceManager (see #20), so it can't observe
+  // either directly; both are asked for via the orchestrator instead.
   bool _serviceRunning = false;
+  // The actual dongle link, from the last status/refresh round trip - can
+  // be false for long stretches while _serviceRunning is true (a failed
+  // cycle disconnects; the service doesn't reconnect until its next
+  // attempt, see #17). #20's first pass conflated the two, showing
+  // "service alive" as if it meant "connected" - this is that follow-up.
+  bool _dongleConnected = false;
 
   // MQTT state
   StreamSubscription? _mqttStatusSubscription;
@@ -121,19 +127,48 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     _initializeData();
   }
 
-  /// Whether the real background service is currently running - checked
-  /// on demand rather than via a live stream, alongside the same moments
-  /// the dashboard already refreshes (open, resume, pull-to-refresh). See
-  /// #20: the dashboard has no BluetoothDeviceManager of its own any more
-  /// to ask "connected?" - a foreground-service-alive check is the honest
-  /// question it can actually answer.
+  /// Refreshes both "is the service running" and "is the dongle actually
+  /// connected" - checked on demand rather than via a live stream,
+  /// alongside the same moments the dashboard already refreshes (open,
+  /// resume, pull-to-refresh, mode switch). See #20: the dashboard has no
+  /// BluetoothDeviceManager of its own any more, so both are asked for
+  /// rather than observed directly - and they're deliberately kept as two
+  /// separate questions, not one, since the service can be alive for a
+  /// while with the dongle disconnected (#17).
   Future<void> _refreshServiceRunningStatus() async {
     if (_currentMode != AppMode.real) {
-      if (mounted) setState(() => _serviceRunning = false);
+      if (mounted) {
+        setState(() {
+          _serviceRunning = false;
+          _dongleConnected = false;
+        });
+      }
       return;
     }
     final running = await BackgroundServiceController.isServiceRunning();
-    if (mounted) setState(() => _serviceRunning = running);
+    await _orchestrator.refreshStatus();
+    if (mounted) {
+      setState(() {
+        _serviceRunning = running;
+        _dongleConnected = _orchestrator.isConnected;
+      });
+    }
+  }
+
+  IconData _statusIcon() {
+    if (!_serviceRunning) return Icons.bluetooth_disabled;
+    return _dongleConnected ? Icons.bluetooth_connected : Icons.bluetooth_searching;
+  }
+
+  Color _statusColor() {
+    if (_dongleConnected) return Colors.green;
+    if (_serviceRunning) return Colors.orange; // tracking, just not connected right now
+    return _currentMode == AppMode.mock ? Colors.orange : Colors.red;
+  }
+
+  String _statusLabel() {
+    if (!_serviceRunning) return 'Not tracking';
+    return _dongleConnected ? 'Connected' : 'Reconnecting…';
   }
 
   void _setupOrchestrator() {
@@ -321,34 +356,21 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       appBar: AppBar(
         title: const Text('Nissan Leaf Battery Tracker'),
         actions: [
-          // Tracking status indicator - reflects whether the real
-          // background service is running, not a live BLE connection (the
-          // dashboard doesn't hold one any more - see #20).
+          // Status indicator - three real states, not a live BLE object's
+          // isConnected (the dashboard doesn't hold one any more - #20):
+          // not tracking (no service), tracking-but-reconnecting (service
+          // alive, dongle currently disconnected - normal between a failed
+          // cycle and the next attempt, #17), and connected.
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8.0),
             child: Center(
               child: Row(
                 children: [
-                  Icon(
-                    _serviceRunning ? Icons.bluetooth_connected : Icons.bluetooth_disabled,
-                    size: 16,
-                    color: _serviceRunning
-                        ? Colors.green
-                        : _currentMode == AppMode.mock
-                            ? Colors.orange
-                            : Colors.red,
-                  ),
+                  Icon(_statusIcon(), size: 16, color: _statusColor()),
                   const SizedBox(width: 4),
                   Text(
-                    _serviceRunning ? 'Tracking' : 'Not tracking',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: _serviceRunning
-                          ? Colors.green
-                          : _currentMode == AppMode.mock
-                              ? Colors.orange
-                              : Colors.red,
-                    ),
+                    _statusLabel(),
+                    style: TextStyle(fontSize: 12, color: _statusColor()),
                   ),
                 ],
               ),
