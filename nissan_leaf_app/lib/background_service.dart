@@ -66,6 +66,20 @@ class BackgroundService extends TaskHandler implements DataOrchestrator {
       : '${Isolate.current.debugName?.isEmpty ?? true ? "?" : Isolate.current.debugName}'
           '/${Isolate.current.hashCode}#${_instanceCounter++}';
 
+  /// How this instance replies to the UI isolate (see #20 - restoring the
+  /// message-passing pattern the pre-flutter_foreground_task
+  /// BackgroundServiceOrchestrator used, lost in the 2025-03-21 plugin
+  /// migration). Only the real background-isolate instance ever has a UI
+  /// listening on the other end - FlutterForegroundTask.sendDataToMain is a
+  /// safe no-op if IsolateNameServer has no port registered under its name,
+  /// so this never throws even when called from an instance nobody's
+  /// listening to (e.g. a stray UI-isolate one, or in tests).
+  void Function(Object data) _sendToMain = FlutterForegroundTask.sendDataToMain;
+  @visibleForTesting
+  void setSendToMainForTesting(void Function(Object data) fn) {
+    _sendToMain = fn;
+  }
+
   /// Factory constructor that returns the singleton instance.
   factory BackgroundService({DataOrchestrator? orchestrator}) {
     _instance ??= BackgroundService._internal(orchestrator: orchestrator);
@@ -309,6 +323,53 @@ class BackgroundService extends TaskHandler implements DataOrchestrator {
   void onRepeatEvent(DateTime timestamp) {
     // Unused: eventAction is nothing(). Scheduling is driven by our own timer
     // (see _scheduleNextCollection); liveness is tracked in service_heartbeat.log.
+  }
+
+  /// Handles commands sent from the UI isolate via
+  /// `FlutterForegroundTask.sendDataToTask` (see #20). This is the only
+  /// place the UI should ever learn about or influence collection state -
+  /// it should not be constructing its own BackgroundService/
+  /// BluetoothDeviceManager and colliding with this one over the same
+  /// physical BLE connection.
+  @override
+  void onReceiveData(Object data) {
+    if (data is! Map) {
+      _log.warning('Received malformed data from UI: $data');
+      return;
+    }
+    switch (data['command']) {
+      case 'getStatus':
+        _sendToMain(_statusSnapshot());
+        break;
+      case 'refreshNow':
+        _handleRefreshNow();
+        break;
+      default:
+        _log.warning('Unknown command from UI: ${data['command']}');
+    }
+  }
+
+  Map<String, dynamic> _statusSnapshot() => {
+        'type': 'status',
+        'running': !_stopRequested,
+        'executing': _executing,
+        'lastTrigger': _lastTrigger.name,
+        'lastCollectionSuccess': _lastCollectionSuccess,
+        'consecutiveFailures': _consecutiveFailures,
+      };
+
+  void _handleRefreshNow() {
+    if (_executing) {
+      _sendToMain({..._statusSnapshot(), 'type': 'refreshResult', 'success': false, 'reason': 'busy'});
+      return;
+    }
+    if (_stopRequested) {
+      _sendToMain({..._statusSnapshot(), 'type': 'refreshResult', 'success': false, 'reason': 'stopped'});
+      return;
+    }
+    execute(TriggerType.manual).then((_) {
+      _sendToMain({..._statusSnapshot(), 'type': 'refreshResult', 'success': _lastCollectionSuccess});
+    });
   }
 
   @override

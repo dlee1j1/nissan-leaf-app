@@ -183,4 +183,83 @@ void main() {
       verifyNever(() => mockOrchestrator.collectData());
     });
   });
+
+  group('UI messaging (#20)', () {
+    late List<Object> sentMessages;
+
+    setUp(() {
+      BackgroundService.resetForTesting();
+      backgroundService = BackgroundService(orchestrator: mockOrchestrator);
+      sentMessages = [];
+      backgroundService.setSendToMainForTesting(sentMessages.add);
+    });
+
+    test('getStatus replies with a status snapshot', () {
+      backgroundService.onReceiveData({'command': 'getStatus'});
+
+      expect(sentMessages, hasLength(1));
+      final reply = sentMessages.single as Map;
+      expect(reply['type'], 'status');
+      expect(reply.containsKey('running'), isTrue);
+      expect(reply.containsKey('executing'), isTrue);
+    });
+
+    test('refreshNow runs a real collection and replies with the result', () async {
+      when(() => mockOrchestrator.collectData()).thenAnswer((_) async => true);
+
+      backgroundService.onReceiveData({'command': 'refreshNow'});
+      // execute()'s completion callback runs on a later microtask.
+      await Future.delayed(Duration.zero);
+      await Future.delayed(Duration.zero);
+
+      verify(() => mockOrchestrator.collectData()).called(1);
+      expect(sentMessages, hasLength(1));
+      final reply = sentMessages.single as Map;
+      expect(reply['type'], 'refreshResult');
+      expect(reply['success'], true);
+    });
+
+    test('refreshNow replies busy instead of double-collecting while already executing', () async {
+      final collecting = Completer<bool>();
+      when(() => mockOrchestrator.collectData()).thenAnswer((_) => collecting.future);
+
+      unawaited(backgroundService.collectData()); // leaves _executing true
+      await Future.delayed(Duration.zero);
+
+      backgroundService.onReceiveData({'command': 'refreshNow'});
+
+      expect(sentMessages, hasLength(1));
+      final reply = sentMessages.single as Map;
+      expect(reply['type'], 'refreshResult');
+      expect(reply['success'], false);
+      expect(reply['reason'], 'busy');
+
+      collecting.complete(true); // let the in-flight one finish, nothing left hanging
+      await Future.delayed(Duration.zero);
+    });
+
+    test('refreshNow replies stopped once the service has self-stopped', () async {
+      when(() => mockOrchestrator.collectData()).thenAnswer((_) async => false);
+      for (var i = 0; i < BackgroundService.maxConsecutiveFailures; i++) {
+        await backgroundService.collectData();
+      }
+
+      backgroundService.onReceiveData({'command': 'refreshNow'});
+
+      expect(sentMessages, hasLength(1));
+      final reply = sentMessages.single as Map;
+      expect(reply['success'], false);
+      expect(reply['reason'], 'stopped');
+    });
+
+    test('unknown command is ignored without sending anything', () {
+      backgroundService.onReceiveData({'command': 'doTheThing'});
+      expect(sentMessages, isEmpty);
+    });
+
+    test('malformed data is ignored without crashing', () {
+      backgroundService.onReceiveData('not a map');
+      expect(sentMessages, isEmpty);
+    });
+  });
 }
