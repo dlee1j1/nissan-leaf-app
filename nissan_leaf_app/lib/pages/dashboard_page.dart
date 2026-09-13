@@ -3,15 +3,13 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
-import 'package:nissan_leaf_app/background_service.dart';
+import 'package:nissan_leaf_app/background_service_controller.dart';
 import 'package:nissan_leaf_app/components/log_viewer.dart';
 import 'package:nissan_leaf_app/mqtt_client.dart';
-import 'package:nissan_leaf_app/obd/connection_status.dart';
 import 'package:simple_logger/simple_logger.dart';
 import 'dart:async';
 import '../data/reading_model.dart';
 import '../data/readings_db.dart';
-import '../obd/bluetooth_device_manager.dart';
 import '../components/battery_status_widget.dart';
 import '../components/readings_chart_widget.dart';
 import '../data_orchestrator.dart';
@@ -34,7 +32,13 @@ class DataOrchestratorFactory {
     DataOrchestrator orchestrator;
     switch (mode) {
       case AppMode.real:
-        orchestrator = BackgroundService();
+        // Never construct BackgroundService()/BluetoothDeviceManager here -
+        // that's the UI isolate independently driving the same physical BLE
+        // connection the real background-task isolate is using, which is
+        // exactly the collision #20 traces and fixes. This orchestrator only
+        // messages the real service and reads readings.db; see its doc
+        // comment.
+        orchestrator = BackgroundServiceOrchestrator();
         break;
       case AppMode.mock:
         orchestrator = MockDataOrchestrator();
@@ -63,7 +67,6 @@ class DashboardPage extends StatefulWidget {
 
 class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserver {
   final ReadingsDatabase _db = ReadingsDatabase();
-  final BluetoothDeviceManager _deviceManager = BluetoothDeviceManager.instance;
 
   // Orchestration mode
   AppMode _currentMode = AppMode.real;
@@ -75,9 +78,11 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   bool _isLoadingHistory = false;
   String? _errorMessage;
 
-  // For connection status display
-  ConnectionStatus _connectionStatus = ConnectionStatus.disconnected;
-  StreamSubscription? _connectionStatusSubscription;
+  // Whether the real background service is currently running - not a live
+  // BLE connection state. The dashboard never holds its own
+  // BluetoothDeviceManager (see #20); "connected" isn't a concept it can
+  // observe directly any more, only "is there a service to ask."
+  bool _serviceRunning = false;
 
   // MQTT state
   StreamSubscription? _mqttStatusSubscription;
@@ -111,9 +116,24 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     }
 
     _setupOrchestrator();
-    _setupConnectionListener();
+    _refreshServiceRunningStatus();
     _setupMqttListener();
     _initializeData();
+  }
+
+  /// Whether the real background service is currently running - checked
+  /// on demand rather than via a live stream, alongside the same moments
+  /// the dashboard already refreshes (open, resume, pull-to-refresh). See
+  /// #20: the dashboard has no BluetoothDeviceManager of its own any more
+  /// to ask "connected?" - a foreground-service-alive check is the honest
+  /// question it can actually answer.
+  Future<void> _refreshServiceRunningStatus() async {
+    if (_currentMode != AppMode.real) {
+      if (mounted) setState(() => _serviceRunning = false);
+      return;
+    }
+    final running = await BackgroundServiceController.isServiceRunning();
+    if (mounted) setState(() => _serviceRunning = running);
   }
 
   void _setupOrchestrator() {
@@ -158,25 +178,19 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       // Clear any error messages when switching modes
       _errorMessage = null;
     });
+    _refreshServiceRunningStatus();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
+      _refreshServiceRunningStatus();
       // App comes to foreground - refresh if needed
       if (_currentReading == null ||
           DateTime.now().difference(_currentReading!.timestamp).inMinutes > 10) {
         _loadHistoricalData().then((_) => _refreshCurrentReading());
       }
     }
-  }
-
-  void _setupConnectionListener() {
-    _connectionStatusSubscription = _deviceManager.connectionStatus.listen((status) {
-      setState(() {
-        _connectionStatus = status;
-      });
-    });
   }
 
   void _setupMqttListener() {
@@ -268,6 +282,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       // Use the current orchestrator for collection
       // kinda a hack here but
       await _orchestrator.collectData();
+      unawaited(_refreshServiceRunningStatus());
 
       // Status updates will be handled by the orchestrator status listener
     } catch (e) {
@@ -306,18 +321,18 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       appBar: AppBar(
         title: const Text('Nissan Leaf Battery Tracker'),
         actions: [
-          // Connection status indicator
+          // Tracking status indicator - reflects whether the real
+          // background service is running, not a live BLE connection (the
+          // dashboard doesn't hold one any more - see #20).
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8.0),
             child: Center(
               child: Row(
                 children: [
                   Icon(
-                    _deviceManager.isConnected
-                        ? Icons.bluetooth_connected
-                        : Icons.bluetooth_disabled,
+                    _serviceRunning ? Icons.bluetooth_connected : Icons.bluetooth_disabled,
                     size: 16,
-                    color: _deviceManager.isConnected
+                    color: _serviceRunning
                         ? Colors.green
                         : _currentMode == AppMode.mock
                             ? Colors.orange
@@ -325,10 +340,10 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                   ),
                   const SizedBox(width: 4),
                   Text(
-                    _connectionStatus.toString().split('.').last,
+                    _serviceRunning ? 'Tracking' : 'Not tracking',
                     style: TextStyle(
                       fontSize: 12,
-                      color: _deviceManager.isConnected
+                      color: _serviceRunning
                           ? Colors.green
                           : _currentMode == AppMode.mock
                               ? Colors.orange
@@ -340,18 +355,15 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
             ),
           ),
 
-          // Connect button
+          // Connect button - always opens the pairing page. Connecting and
+          // disconnecting the dongle happens there, not from the dashboard.
           IconButton(
             icon: const Icon(Icons.bluetooth),
             tooltip: 'Connect to OBD',
             onPressed: () async {
-              if (_deviceManager.isConnected) {
-                await _deviceManager.disconnect();
-              } else {
-                await Navigator.pushNamed(context, '/connection');
-                // Refresh after returning from connection page
-                _refreshCurrentReading();
-              }
+              await Navigator.pushNamed(context, '/connection');
+              // Refresh after returning from the connection page
+              _refreshCurrentReading();
             },
           ),
 
@@ -550,7 +562,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
               ),
 
               // Connection status or instructions
-              if (!_deviceManager.isConnected && _currentMode != AppMode.mock)
+              if (!_serviceRunning && _currentMode != AppMode.mock)
                 Card(
                   child: Padding(
                     padding: const EdgeInsets.all(16.0),
@@ -588,7 +600,6 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   @override
   void dispose() {
     _mqttStatusSubscription?.cancel();
-    _connectionStatusSubscription?.cancel();
     _orchestratorStatusSubscription?.cancel();
     _orchestrator.dispose();
     WidgetsBinding.instance.removeObserver(this);
