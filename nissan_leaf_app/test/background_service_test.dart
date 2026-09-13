@@ -141,6 +141,7 @@ void main() {
       expect(heartbeatLog().existsSync(), isTrue);
       final contents = await heartbeatLog().readAsString();
       expect(contents, contains('start (system)'));
+      expect(contents, contains('cycle-start trigger='));
       expect(contents, contains('cycle trigger='));
     });
 

@@ -135,7 +135,22 @@ class BackgroundService extends TaskHandler implements DataOrchestrator {
 
   /// Append a timestamped line to the heartbeat log so a completed drive can be
   /// confirmed after the fact (the only verification available without a rig).
-  Future<void> _appendHeartbeat(String note) async {
+  ///
+  /// Chained onto a queue rather than writing directly: two `unawaited()`
+  /// callers close together (see execute()'s cycle-start/cycle-complete
+  /// pair) would otherwise race the same file - this method itself awaits
+  /// `getApplicationDocumentsDirectory()` before ever touching the file, so
+  /// two near-simultaneous calls can genuinely overlap, and the loser's
+  /// write can be silently dropped rather than merely reordered. Found by
+  /// the cycle-start line vanishing outright in a test where collectData()
+  /// resolves fast enough for exactly that race to happen every time.
+  Future<void> _heartbeatQueue = Future.value();
+  Future<void> _appendHeartbeat(String note) {
+    _heartbeatQueue = _heartbeatQueue.then((_) => _doAppendHeartbeat(note));
+    return _heartbeatQueue;
+  }
+
+  Future<void> _doAppendHeartbeat(String note) async {
     if (kIsWeb) return;
     try {
       final dir = await getApplicationDocumentsDirectory();
@@ -191,6 +206,18 @@ class BackgroundService extends TaskHandler implements DataOrchestrator {
       _log.info('Executing based on $trigger');
       _lastTrigger = trigger;
       _timer?.cancel();
+
+      // Fire-and-forget, written before any await below - if collectData()
+      // hangs forever (e.g. a BLE connect that never resolves or throws;
+      // nothing in that chain is currently timeout-guarded), the *completion*
+      // heartbeat a few lines down never gets a chance to write, and the log
+      // goes silent - indistinguishable from the isolate never having started
+      // at all. This line is what tells the two apart after the fact: seeing
+      // it with no matching completion line means execute() began and got
+      // stuck inside; seeing neither means the isolate itself likely never
+      // ran. See issue #3 - a real drive lost ~53 minutes to exactly this
+      // ambiguity with no way to resolve it after the fact.
+      unawaited(_appendHeartbeat('cycle-start trigger=${trigger.name}'));
 
       try {
         FlutterForegroundTask.updateService(
