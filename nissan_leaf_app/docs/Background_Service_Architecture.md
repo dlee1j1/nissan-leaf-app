@@ -14,30 +14,112 @@ The Background Service architecture handles automated data collection from the v
               │  + ObdConnectionPolicy  │   ACL_CONNECTED → start service
               └───────────┬────────────┘   (no stop — service self-terminates)
                           │ startForegroundService()
-──────────────────────────┼───────────────────────────  Platform API boundary
-   ┌───────────────┐      │
-   │ DashboardPage │──────┤   BackgroundServiceController
-   └───────────────┘      │   - initialize(): notification channel, permissions
-                          │   - startService() once at launch, only to persist
-                          │     the notification options + Dart callback handle
-                          ▼     that the receiver needs to start headless
-        ┌─────────────────────────┐     ┌─────────────────────┐
-        │ BackgroundService       │────▶│ DataOrchestrator    │
-        │ (TaskHandler)           │     │  (Interface)        │
-        │  onStart: heartbeat +   │     └──────────┬──────────┘
-        │  permission re-check    │                ▼
-        └─────────────────────────┘     ┌─────────────────────┐
-                                        │ DirectOBDOrchestrator│
-                                        └──────────┬──────────┘
-                                                   ▼
-                                        ┌─────────────────────┐
-                                        │   OBDConnector      │
-                                        └─────────────────────┘
+                          ▼
+══════════════════════════════════════════════════════  isolate boundary (#20)
+  Background-task isolate (flutter_foreground_task spawns          Main UI isolate
+  this fresh via backgroundServiceEntryPoint - see #20)         ┌───────────────┐
+                                                                 │ DashboardPage │
+        ┌─────────────────────────┐     ┌─────────────────────┐└──────┬────────┘
+        │ BackgroundService       │────▶│ DataOrchestrator    │       │
+        │ (TaskHandler)           │     │  (Interface)        │       │ DataOrchestratorFactory
+        │  onStart: heartbeat +   │     └──────────┬──────────┘       │  .create(AppMode.real)
+        │  permission re-check    │                ▼                 ▼
+        │  onReceiveData: replies │     ┌─────────────────────┐ ┌─────────────────────────┐
+        │  to getStatus/refreshNow│     │ DirectOBDOrchestrator│ │ BackgroundServiceOrchestr│
+        └────────────┬────────────┘     └──────────┬──────────┘ │ ator (implements the same│
+                     │ sendDataToMain               ▼            │ DataOrchestrator - never │
+                     │ (IsolateNameServer,  ┌─────────────────┐  │ touches Bluetooth)       │
+                     │  see #20)            │   OBDConnector  │  └───────────┬──────────────┘
+                     │                      │  (real BLE)     │              │ sendDataToTask
+                     └──────────────────────┴─────────────────┘              │ ('refreshNow'/
+                                       ▲                                     │  'getStatus')
+                                       │                                     │
+                                readings.db ◀───────────────────────────────┘
+                        (real file, safely reachable from both isolates -
+                         the actual data transport; see "Two Isolates" below)
 ```
 
-## Three-Part Design
+## Two Isolates: Why the UI Can't Just Share the Collector
 
-The background functionality is implemented as three distinct components:
+`flutter_foreground_task` runs the `TaskHandler` (`BackgroundService`) in a
+Dart isolate the plugin spawns specifically for it, separate from the main
+UI isolate that builds the widget tree. This is unavoidable, not a design
+choice: Android's foreground `Service` can outlive the `Activity` (this app
+starts it headlessly, with no Activity ever having run), and Flutter's
+engine/isolate is tied to whatever hosts it - there's no single isolate
+that's guaranteed to exist across both.
+
+Dart isolates share **no memory** - not "share carefully," not "share with a
+lock," genuinely inaccessible. A `factory`/`static` singleton (`BackgroundService`,
+`BluetoothDeviceManager`) only guarantees one instance *within the isolate
+that constructed it*. Before #20, `DashboardPage` called
+`DataOrchestratorFactory.create(AppMode.real)`, which constructed its own
+`BackgroundService()` - a second, independent instance living in the main
+isolate's memory, entirely unaware of the real one. Both, by default, built
+their own `DirectOBDOrchestrator` → `OBDConnector` → `BluetoothDeviceManager`.
+Isolate isolation protected the thing that didn't need it (neither instance
+could corrupt the other's Dart heap) and did nothing for the thing that did:
+both ultimately drove the same physical Bluetooth radio through
+`flutter_blue_plus`, which talks to the OS Bluetooth stack regardless of
+which isolate is asking. Confirmed on a real drive
+(`PlatformException(writeCharacteristic, ... ERROR_GATT_WRITE_REQUEST_BUSY)`,
+`FormatException: CAN Frame: Invalid frame length`, and 53 minutes of zero
+database rows despite the receiver confirming the real service had started -
+every reading that drive produced turned out to trace back to the dashboard
+being open, not the headless service).
+
+**Fix: the UI never touches Bluetooth. It messages the real service.**
+`BackgroundServiceOrchestrator` (UI isolate) implements the same
+`DataOrchestrator` interface as `DirectOBDOrchestrator`, but instead of
+holding a `BluetoothDeviceManager`, it:
+1. Checks `FlutterForegroundTask.isRunningService` - no point messaging a
+   service that isn't there.
+2. Sends `{'command': 'refreshNow'}` via `FlutterForegroundTask.sendDataToTask`
+   and awaits a `{'type': 'refreshResult', 'success': ..., 'connected': ...}`
+   reply via `addTaskDataCallback` (20s timeout - a hung real service, see
+   the "known gap" below, should mean this gives up, not that the UI hangs).
+   `BackgroundService.onReceiveData` is the receiving side, running only on
+   the real instance the plugin actually registered via `setTaskHandler`.
+3. Reads the actual reading back from `readings.db` rather than carrying it
+   in the reply - the database is a real file both isolates reach
+   independently, unlike a Dart object confined to one isolate's heap, so
+   it's the natural data transport (the same reason `service_heartbeat.log`
+   and `receiver_debug.log`, below, have been reliable cross-isolate
+   evidence this whole investigation leaned on).
+
+`isConnected` (is the dongle linked *right now*, distinct from "is the
+service running" - #17 means these diverge for real stretches between a
+failed cycle's disconnect and the next reconnect attempt) travels the same
+way: `BackgroundService` includes it in every status/refresh reply;
+`BackgroundServiceOrchestrator` caches the last value it was told, since it
+can't synchronously ask a different isolate, and `refreshStatus()` gives the
+UI a cheap way to ask for a fresh answer (5s timeout) without forcing a real
+collection cycle the way `refreshNow` does.
+
+This restores, on top of the current plugin's API, a pattern the app had
+before: pre-2025-03-21 (before migrating from `flutter_background_service`
+to `flutter_foreground_task`), `AppMode.real`'s orchestrator was a
+`BackgroundServiceOrchestrator` that sent `invoke('manualCollect')` and
+listened on `.on('status')` - the same shape of fix, just built on
+`flutter_background_service`'s message-passing instead of
+`flutter_foreground_task`'s. It didn't survive the plugin migration; nobody
+re-wired the equivalent on the new plugin's API at the time. See issue #20
+for the full incident writeup.
+
+**Known gap:** if the real service's isolate hangs mid-cycle (plausible -
+nothing in the scan/connect/probe chain is timeout-guarded; see the
+`cycle-start` heartbeat line added to help tell "isolate never ran" apart
+from "ran and got stuck," under issue #3), `refreshNow`/`refreshStatus`
+requests just time out. The UI degrades to showing stale data with a timeout
+error rather than hanging, but nothing currently un-sticks the real service
+itself - revisit if that turns out to be a recurring, not merely
+theoretical, failure mode.
+
+## Four-Part Design
+
+The background functionality is implemented as four distinct components -
+three native/background-isolate pieces, plus the UI-isolate messenger added
+in #20 (see "Two Isolates" above for why that split exists at all):
 
 1. **ObdConnectionReceiver** (native Kotlin) - the start trigger:
    - Manifest-declared `BroadcastReceiver` on `ACTION_ACL_CONNECTED` — delivered
@@ -80,6 +162,20 @@ The background functionality is implemented as three distinct components:
      probe response, etc.) — otherwise a scan that came back empty because
      of e.g. a platform scan-throttle rejection looks identical to
      "genuinely nothing in range" (see issue #3).
+
+4. **BackgroundServiceOrchestrator** (UI isolate) - the messenger, not a
+   collector:
+   - Never constructs a `BluetoothDeviceManager` - `DataOrchestratorFactory`
+     hands this to `DashboardPage` for `AppMode.real` instead of a
+     `BackgroundService()` of its own (see "Two Isolates" above for why that
+     used to be the bug)
+   - `collectData()`: checks `isRunningService`, sends `refreshNow`, awaits
+     the reply, then reads the actual reading back from `readings.db`
+   - `refreshStatus()`: a cheaper `getStatus` round trip for just
+     `isConnected`, without forcing a real collection cycle
+   - Implements the same `DataOrchestrator` interface as
+     `DirectOBDOrchestrator`, so `DashboardPage`'s code doesn't need to know
+     which one it's holding
 
 This separation allows:
 - Clean isolation of platform-specific code
@@ -200,16 +296,66 @@ connects until it stops itself:
 
 Defines the interface and implementations for data collection strategies:
 
-1. `DataOrchestrator` - The base interface
-2. `DirectOBDOrchestrator` - Implementation using direct OBD connection
-3. `MockDataOrchestrator` - Implementation providing simulated data
+1. `DataOrchestrator` - the base interface. Beyond `collectData()`/
+   `statusStream`/`dispose()`/`lastFailureReason`, it also declares
+   `isConnected` (is the dongle linked right now) and `refreshStatus()`
+   (best-effort refresh of that without a real collection cycle) - added for
+   #20, since "is the service running" and "is it connected" turned out to
+   be different questions worth asking separately (#17 means they diverge
+   for real stretches).
+2. `DirectOBDOrchestrator` - real collection via `OBDConnector`/
+   `BluetoothDeviceManager`. `isConnected` is live here (it holds the
+   connection); `refreshStatus()` is a no-op.
+3. `BackgroundServiceOrchestrator` - the UI-isolate messenger (see
+   "Two Isolates" / Four-Part Design above). `isConnected` is a cached,
+   best-effort value updated from status/refresh replies, since this
+   orchestrator can't synchronously ask a different isolate.
+4. `MockDataOrchestrator` - simulated data; `isConnected` is always `true`
+   (no real dongle to track).
 
 The orchestrator is responsible for:
-- Connecting to the vehicle
+- Connecting to the vehicle (or, for `BackgroundServiceOrchestrator`, asking
+  whichever isolate actually can)
 - Collecting data points
 - Storing readings in the database
 - Publishing to MQTT (if enabled)
 - Maintaining collection sessions
+
+## Diagnostics
+
+Two durable, on-device log files, plus a way to actually read them - all
+added investigating issue #3, since there's no hardware rig and the real
+failure modes (restart storms, BLE collisions, an isolate that never wrote
+a single line) only ever showed up on real drives with nobody watching:
+
+- **`service_heartbeat.log`** (app documents dir) - one line per `start`,
+  `cycle-start`, `cycle` (with `reason=<...>` on failure - see
+  `background_service.dart` above), and `stop`. `cycle-start` is written
+  before any `await` in `execute()`, specifically so a cycle that starts and
+  then hangs forever (nothing in the scan/connect/probe chain is
+  timeout-guarded) leaves a trace distinguishable from the isolate never
+  having run at all - both used to look like the same silence.
+- **`receiver_debug.log`** (app files dir) - one line per `ACL_CONNECTED`
+  `ObdConnectionReceiver` sees, unconditionally (`IGNORE` included), with
+  the device name, permission state, `decide()`'s outcome, and the
+  `startForegroundService()` result. Without this, a name/match bug showing
+  up as `decision=IGNORE` looks identical to "the broadcast never arrived
+  at all" - very different problems that would otherwise be indistinguishable
+  from the outside.
+- **Every heartbeat line is tagged** `[<isolate debug name>/<isolate
+  hashCode>#<instance counter>]` (see #9/#3). `BackgroundService` is
+  constructed independently in two places that can both be alive at once
+  (see "Two Isolates" above) - before this tag, there was no way to tell
+  from the log alone whether a given line came from the real service or
+  from a stray second instance.
+- **Reading either file off a release build**: `adb run-as` needs a
+  debuggable app, and flipping `debuggable=true` on the release build type
+  directly crashes on launch (SIGABRT - an AOT-release/debuggable-manifest
+  mismatch that SELinux blocks on newer Android). `make debug-apk` builds
+  the real, supported `flutter build apk --debug` variant to a separate
+  file instead; same debug signing config as release, so `adb install -r`
+  over either variant preserves app data. Install it, pull the files, then
+  reinstall the release apk to go back to normal.
 
 ## Collection Loop
 
@@ -264,7 +410,14 @@ This allows for logical grouping of data points, making it easier to:
 
 For testing or when no vehicle is available, a mock mode provides simulated data:
 
-- Set via `AppState.instance.enableMockMode()`
+- Set via `DashboardPage`'s mode-switch menu (`_setMode(AppMode.mock)`),
+  which swaps `DataOrchestratorFactory`'s cached orchestrator to
+  `MockDataOrchestrator`. Not `AppState.instance.enableMockMode()` - that
+  flag exists (`app_state.dart`) but nothing in the app currently calls it;
+  it's read only by `mqtt_client.dart` for an unrelated, separate mock
+  concept, so it stays permanently `false` in practice. Pre-existing
+  staleness, noticed while updating this doc for #20 - not something #20
+  touched.
 - Uses predefined battery states from `mock_battery_states.dart`
 - No actual OBD connection is attempted
 - Helpful for development and demonstration

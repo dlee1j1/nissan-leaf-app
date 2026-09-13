@@ -20,13 +20,25 @@ const CHARACTERISTIC_UUID = "0000ffe1-0000-1000-8000-00805f9b34fb";
 /// Manages all Bluetooth operations for OBD connectivity.
 ///
 /// A plain, normally-constructible class - not a baked-in singleton. [instance]
-/// is a global accessor over the app's one real instance, shared by its two
-/// production call sites (`OBDConnector`, `DashboardPage`); it's convenience,
+/// is a global accessor over the app's one real instance; it's convenience,
 /// not a constraint. Tests construct their own via `BluetoothDeviceManager()`
 /// directly, so each test starts from genuinely clean state instead of
 /// needing to remember to reset every field a shared instance might carry
 /// over from the previous test (see #9, which did the same for
 /// BackgroundService - this class had the identical problem).
+///
+/// [instance] is only ever reached through `OBDConnector`, from two places:
+/// `DirectOBDOrchestrator` (the real background-task isolate's collector)
+/// and `connection_page.dart` (the UI isolate's manual pairing flow).
+/// `DashboardPage` deliberately does *not* construct one any more - it used
+/// to, and that was a UI isolate independently driving the same physical
+/// BLE connection the background isolate was using, which is the collision
+/// issue #20 traces and fixes. `.instance` being per-isolate (see the "Two
+/// Isolates" section of `Background_Service_Architecture.md`) means the
+/// background-task isolate's instance and the UI isolate's instance here
+/// were always two different objects regardless - the fix wasn't sharing
+/// this instance more carefully, it was the UI not touching Bluetooth at
+/// all outside the explicit, occasional, user-initiated pairing flow.
 class BluetoothDeviceManager {
   BluetoothDeviceManager();
 
