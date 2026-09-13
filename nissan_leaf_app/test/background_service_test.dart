@@ -143,6 +143,10 @@ void main() {
       expect(contents, contains('start (system)'));
       expect(contents, contains('cycle-start trigger='));
       expect(contents, contains('cycle trigger='));
+      // Every line carries which instance wrote it (see #9/#3) - two
+      // BackgroundServices, one per isolate, can be alive and writing to
+      // this same file at once.
+      expect(contents, matches(RegExp(r'\[\S+\]')));
     });
 
     test('onStart stops the service and logs an abort when a permission is missing', () async {

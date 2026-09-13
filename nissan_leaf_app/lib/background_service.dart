@@ -1,6 +1,7 @@
 // background_service.dart - the foreground-task handler
 import 'dart:async';
 import 'dart:io';
+import 'dart:isolate' show Isolate;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:meta/meta.dart';
@@ -47,6 +48,23 @@ class BackgroundService extends TaskHandler implements DataOrchestrator {
   bool _stopRequested = false;
   Timer? _timer;
   bool _executing = false;
+
+  /// Tags every heartbeat line with which BackgroundService wrote it.
+  /// BackgroundService is constructed independently in at least two places
+  /// that can be alive simultaneously: the real flutter_foreground_task
+  /// background isolate, and DashboardPage's own copy via
+  /// DataOrchestratorFactory.create(AppMode.real) in the main UI isolate
+  /// (see #9) - opening the dashboard arms a second, independent
+  /// execute()/timer loop there. Both write identically-formatted lines to
+  /// the same heartbeat file, so without a tag there is no way to tell
+  /// after the fact whether a given success came from the real headless
+  /// service or from the UI's parallel one - a question that turned out to
+  /// matter (see #3).
+  static int _instanceCounter = 0;
+  final String _instanceTag = kIsWeb
+      ? 'web'
+      : '${Isolate.current.debugName?.isEmpty ?? true ? "?" : Isolate.current.debugName}'
+          '/${Isolate.current.hashCode}#${_instanceCounter++}';
 
   /// Factory constructor that returns the singleton instance.
   factory BackgroundService({DataOrchestrator? orchestrator}) {
@@ -156,7 +174,7 @@ class BackgroundService extends TaskHandler implements DataOrchestrator {
       final dir = await getApplicationDocumentsDirectory();
       final file = File('${dir.path}/service_heartbeat.log');
       await file.writeAsString(
-        '${DateTime.now().toIso8601String()} $note\n',
+        '${DateTime.now().toIso8601String()} [$_instanceTag] $note\n',
         mode: FileMode.append,
         flush: true,
       );
