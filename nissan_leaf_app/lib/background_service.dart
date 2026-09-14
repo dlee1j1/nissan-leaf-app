@@ -351,6 +351,15 @@ class BackgroundService extends TaskHandler implements DataOrchestrator {
 
       if (_lastCollectionSuccess) {
         _consecutiveFailures = 0;
+        // Proactive push, not just a reply to something the UI asked for -
+        // see issue #25. Every other trigger the UI has (refreshNow's
+        // reply, resume, pull-to-refresh) only fires from something the UI
+        // itself initiated; an ordinary timer-triggered cycle succeeding on
+        // its own had nothing telling a dashboard that happens to be open
+        // right now that new data exists, so it just sat there stale until
+        // the next explicit ask. A safe no-op if nothing's listening (see
+        // the class doc on _sendToMain).
+        _sendToMain({'type': 'newReading'});
       } else if (++_consecutiveFailures >= maxConsecutiveFailures) {
         _log.info('$_consecutiveFailures collections failed in a row - stopping (probably parked)');
         _stopRequested = true;
