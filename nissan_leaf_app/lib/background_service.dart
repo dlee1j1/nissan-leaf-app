@@ -133,6 +133,12 @@ class BackgroundService extends TaskHandler implements DataOrchestrator {
       if (missing.isNotEmpty) {
         _log.severe('Missing prerequisites, stopping service: ${missing.join(', ')}');
         await _appendHeartbeat('abort - missing prerequisites: ${missing.join(', ')}');
+        _sendToMain({
+          ..._statusSnapshot(),
+          'type': 'startupResult',
+          'success': false,
+          'reason': 'missing prerequisites: ${missing.join(', ')}',
+        });
         try {
           await FlutterForegroundTask.stopService();
         } catch (e) {
@@ -145,6 +151,15 @@ class BackgroundService extends TaskHandler implements DataOrchestrator {
         await execute(TriggerType.manual);
       } catch (e) {
         _log.severe('Error during initial collection: $e');
+      } finally {
+        // Restarting-from-stopped (see #20 follow-up: pull-to-refresh
+        // starting a self-stopped service) needs to know when *this specific*
+        // startup cycle finishes, not just any cycle - a coincidental timer
+        // cycle finishing around the same moment must not satisfy that wait.
+        // A distinct message type, sent only here, keeps it unambiguous
+        // without adding a second request/reply round trip on top of the
+        // startup that's already happening.
+        _sendToMain({..._statusSnapshot(), 'type': 'startupResult', 'success': _lastCollectionSuccess});
       }
     } catch (e, stackTrace) {
       _log.severe('Fatal error in onStart: $e\n$stackTrace');

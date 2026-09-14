@@ -220,10 +220,17 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       _refreshServiceRunningStatus();
-      // App comes to foreground - refresh if needed
+      // App comes to foreground - reload the chart from the DB if it's
+      // stale, since the background service may have kept collecting while
+      // we were away. Deliberately does NOT also force a live collectData()
+      // round trip here: merely glancing at the app after being away isn't
+      // "please read the dongle now" - that's what pull-to-refresh is for.
+      // A stale-triggered live read here used to fire every time someone
+      // reopened the app with the car parked, silently re-arming the
+      // service's polling loop.
       if (_currentReading == null ||
           DateTime.now().difference(_currentReading!.timestamp).inMinutes > 10) {
-        _loadHistoricalData().then((_) => _refreshCurrentReading());
+        _loadHistoricalData();
       }
     }
   }

@@ -159,12 +159,22 @@ void main() {
       backgroundService = BackgroundService();
       backgroundService.setOrchestratorForTesting(mockOrchestrator);
       clearInteractions(mockOrchestrator);
+      final sent = <Object>[];
+      backgroundService.setSendToMainForTesting(sent.add);
 
       await backgroundService.onStart(DateTime.now(), TaskStarter.system);
 
       verifyNever(() => mockOrchestrator.collectData());
       final contents = await heartbeatLog().readAsString();
       expect(contents, contains('abort - missing prerequisites'));
+      // A restart-from-stopped orchestrator (#20 follow-up) is waiting on
+      // this message, not just any timer cycle's - it must arrive even when
+      // startup fails before execute() ever runs, or that wait just times out.
+      expect(sent, hasLength(1));
+      final reply = sent.single as Map;
+      expect(reply['type'], 'startupResult');
+      expect(reply['success'], false);
+      expect(reply['reason'], contains('missing prerequisites'));
     });
 
     test('stops itself after N consecutive failed cycles', () async {
@@ -268,6 +278,26 @@ void main() {
       final reply = sentMessages.single as Map;
       expect(reply['success'], false);
       expect(reply['reason'], 'stopped');
+    });
+
+    test('onStart sends a startupResult message once its initial cycle succeeds', () async {
+      when(() => mockOrchestrator.collectData()).thenAnswer((_) async => true);
+
+      await backgroundService.onStart(DateTime.now(), TaskStarter.developer);
+
+      final reply = sentMessages.last as Map;
+      expect(reply['type'], 'startupResult');
+      expect(reply['success'], true);
+    });
+
+    test('onStart sends a failed startupResult when its initial cycle fails', () async {
+      when(() => mockOrchestrator.collectData()).thenAnswer((_) async => false);
+
+      await backgroundService.onStart(DateTime.now(), TaskStarter.developer);
+
+      final reply = sentMessages.last as Map;
+      expect(reply['type'], 'startupResult');
+      expect(reply['success'], false);
     });
 
     test('unknown command is ignored without sending anything', () {

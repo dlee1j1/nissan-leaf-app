@@ -391,12 +391,48 @@ next success resets the counter and settles back into a held-open connection.
 
 Known gap (out of scope, issue #13): a genuinely flaky dongle could rack up 5
 failures *while still driving* and stop the service with no way to restart it
-until the next connection. If real drives show that in `service_heartbeat.log`,
-gate the self-terminate on a "still in the car" check — best signal is whether
-the Leaf's Bluetooth (`MY LEAF`) is still connected, since that is the same
-classic-BT link we trust to start on; a cheap fallback is "no successful
-collection in the last ~10 minutes". (Not `ActivityRecognition` — its
-`IN_VEHICLE` is too laggy and unreliable to gate on.)
+until the next connection (pull-to-refresh, below, needs a hand on the phone -
+it doesn't help mid-drive). If real drives show that in
+`service_heartbeat.log`, gate the self-terminate on a "still in the car" check
+— best signal is whether the Leaf's Bluetooth (`MY LEAF`) is still connected,
+since that is the same classic-BT link we trust to start on; a cheap fallback
+is "no successful collection in the last ~10 minutes". (Not
+`ActivityRecognition` — its `IN_VEHICLE` is too laggy and unreliable to gate
+on.)
+
+### Restarting a Stopped Service
+
+Pull-to-refresh (the `RefreshIndicator` in `dashboard_page.dart`, wired to
+`_refreshCurrentReading()` → `_orchestrator.collectData()`) can restart a
+service that self-stopped, or was never started this run — the user pulling
+down is an explicit, in-person "check right now" that overrides the
+"probably parked" heuristic (#20 follow-up). `BackgroundServiceOrchestrator
+.collectData()` checks `isServiceRunning()`; when false, instead of failing
+immediately it calls `BackgroundServiceController.startService()` and awaits
+a `startupResult` message — `onStart()`'s own initial
+`execute(TriggerType.manual)` reporting back once it finishes. That message
+type is sent from nowhere else, so this wait can't be satisfied by an
+unrelated timer cycle completing around the same moment. No `refreshNow` is
+also sent: `onStart()` already runs exactly one cycle before anything else,
+so a second request would either race the freshly spawned isolate's own
+listener registration or double up the BLE round trip once it's free.
+
+Deliberately out of scope for now: what happens *after* that one restart
+cycle. A failed restart still re-arms the normal 1-minute polling loop for up
+to `maxConsecutiveFailures` more cycles before stopping again, same as any
+other start — there's no one-shot special case. A stray pull-to-refresh at
+home could cost a few minutes of pointless polling; left as an open question
+rather than solved here.
+
+The auto-refresh-on-resume path that used to *also* reach this same
+`collectData()` call — firing whenever the app came back to the foreground
+with a reading more than 10 minutes stale — was removed for the same reason
+it's being left alone here: it fired from simply glancing at the app, not
+from asking for anything, and would silently re-arm the same polling burst
+just from that. `didChangeAppLifecycleState`'s resume handler now only
+reloads the historical chart from the DB (cheap, no BLE) and checks status
+(`getStatus`, not a collection) when stale — a live read only ever happens
+from pull-to-refresh or cold app launch.
 
 ## Sessions and Continuity
 
