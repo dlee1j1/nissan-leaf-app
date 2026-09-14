@@ -115,6 +115,29 @@ error rather than hanging, but nothing currently un-sticks the real service
 itself - revisit if that turns out to be a recurring, not merely
 theoretical, failure mode.
 
+**Zombie service (#22):** a worse variant of the gap above - the native
+receiver can get Android to promote the process to a foreground service
+(confirmed independently by `receiver_debug.log` and `ActivityManager`'s own
+log) while the Dart `TaskHandler` never attaches at all: no heartbeat, not
+even `onStart()`'s first line. `isServiceRunning()` then reports "alive" for
+a service nothing is listening on, so `refreshNow`/`refreshStatus` just burn
+their full timeout with no way to tell "isolate is slow" from "isolate never
+came up." Root cause traced to `flutter_foreground_task` 8.17.0's
+`ForegroundService.onStartCommand()`: the `REBOOT`/`RESTART` branch called
+`startForegroundService()` (the part `ActivityManager`'s log reflects) and
+then `createForegroundTask()` (spins up the actual `FlutterEngine` + Dart
+callback) with no try/catch around either - an exception between those two
+calls left the OS-level FGS promotion done and the Dart side never started,
+exactly this symptom. Bumped to 11.0.3, which wraps that whole dispatch in a
+try/catch that calls `stopForegroundService()` on any exception instead of
+leaving a zombie. Field-confirmation (a real drive reproducing the
+foreground-app trigger without recurrence) is still pending as of the
+upgrade - treat as a strong candidate fix, not a closed root cause, until
+that happens. `TaskHandler.onDestroy` gained an `isTimeout` param in this
+bump (recorded as `stop (timeout)` in `service_heartbeat.log`) - a
+`true` value would be direct evidence of the redundant-FGS-start-contract
+race the plugin's 9.2.2 changelog separately describes fixing.
+
 ## Four-Part Design
 
 The background functionality is implemented as four distinct components -

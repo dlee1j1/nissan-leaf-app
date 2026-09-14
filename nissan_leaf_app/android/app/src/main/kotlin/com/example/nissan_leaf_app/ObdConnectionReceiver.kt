@@ -36,8 +36,9 @@ import java.time.LocalDateTime
  * requires the app to have called FlutterForegroundTask.startService() at least
  * once before (done in main.dart) so the notification options and the Dart
  * callback handle are already persisted. The constants below mirror the pinned
- * plugin (flutter_foreground_task 8.17.0); they are strings on purpose to avoid
- * a compile dependency on plugin internals.
+ * plugin (flutter_foreground_task 11.0.3 - bumped from 8.17.0 for #22, see its
+ * PreferencesKey.kt/ForegroundServiceAction.kt; unchanged across that bump);
+ * they are strings on purpose to avoid a compile dependency on plugin internals.
  */
 class ObdConnectionReceiver : BroadcastReceiver() {
 

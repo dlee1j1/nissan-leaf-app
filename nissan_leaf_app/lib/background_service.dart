@@ -416,9 +416,15 @@ class BackgroundService extends TaskHandler implements DataOrchestrator {
   }
 
   @override
-  Future<void> onDestroy(DateTime timestamp) async {
-    _log.info('Background service being destroyed');
-    await _appendHeartbeat('stop');
+  Future<void> onDestroy(DateTime timestamp, bool isTimeout) async {
+    _log.info('Background service being destroyed${isTimeout ? ' (timeout)' : ''}');
+    // isTimeout is new in flutter_foreground_task 9.0+: true when the OS tore
+    // the service down because it didn't stop in time (the
+    // ForegroundServiceDidNotStopInTime family of exceptions the 9.2.2
+    // changelog says it fixed - see issue #22). Worth keeping in the durable
+    // log since a real occurrence would be direct evidence for or against
+    // that fix actually holding.
+    await _appendHeartbeat(isTimeout ? 'stop (timeout)' : 'stop');
     try {
       dispose();
     } catch (e, stackTrace) {
