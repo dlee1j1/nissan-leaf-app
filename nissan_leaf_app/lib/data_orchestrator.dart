@@ -39,6 +39,17 @@ abstract class DataOrchestrator {
   /// Best-effort refresh of [isConnected] without running a real collection
   /// cycle. A no-op for orchestrators where [isConnected] is already live.
   Future<void> refreshStatus();
+
+  /// TEMPORARY (data-pipeline plan, Phase A): raw speed/odometer/ambientTemp
+  /// values from the most recent cycle, collected purely to verify their OBD
+  /// decode formulas against the real car - never persisted to the database
+  /// or MQTT, and not part of [Reading]. Null when nothing extra was
+  /// collected this cycle (including for orchestrators, like
+  /// [BackgroundServiceOrchestrator] and [MockDataOrchestrator], that have
+  /// no direct OBD reads of their own to report). Remove once Phase A is
+  /// done and either these fields are wired in for real (Phase B) or found
+  /// wanting.
+  Map<String, dynamic>? get lastVerificationData;
 }
 
 /// Orchestrator that connects directly to OBD (Debug Mode)
@@ -86,6 +97,10 @@ class DirectOBDOrchestrator implements DataOrchestrator {
   @override
   Future<void> refreshStatus() async {} // isConnected is already live
 
+  Map<String, dynamic>? _lastVerificationData;
+  @override
+  Map<String, dynamic>? get lastVerificationData => _lastVerificationData;
+
   final SingleFlight<bool> _collectGuard = SingleFlight<bool>();
   @override
   Future<bool> collectData() {
@@ -107,6 +122,14 @@ class DirectOBDOrchestrator implements DataOrchestrator {
         _statusController.add({'collecting': false, 'error': 'No data collected'});
         return false;
       }
+
+      // TEMPORARY (data-pipeline plan, Phase A) - see lastVerificationData.
+      const verificationKeys = ['speed', 'odometer', 'ambient_temp'];
+      final verification = {
+        for (final k in verificationKeys)
+          if (data.containsKey(k)) k: data[k],
+      };
+      _lastVerificationData = verification.isEmpty ? null : verification;
 
       // Create reading and store/publish
       final reading = Reading.fromObdMap(data);
@@ -214,6 +237,12 @@ class BackgroundServiceOrchestrator implements DataOrchestrator {
   final ReadingsDatabase _db;
   final _log = SimpleLogger();
   String? _lastFailureReason;
+
+  // This isolate never does direct OBD reads (see the class doc) - the
+  // real background isolate's own DirectOBDOrchestrator is the one that
+  // has anything to report here.
+  @override
+  Map<String, dynamic>? get lastVerificationData => null;
 
   // Best-effort, cached from the last status/refresh reply - this isolate
   // can't synchronously ask another one whether the dongle is connected
@@ -402,6 +431,9 @@ class BackgroundServiceOrchestrator implements DataOrchestrator {
 class MockDataOrchestrator implements DataOrchestrator {
   final _statusController = StreamController<Map<String, dynamic>>.broadcast();
   final _log = SimpleLogger();
+
+  @override
+  Map<String, dynamic>? get lastVerificationData => null; // no real OBD reads to report
 
   MockDataOrchestrator() {
     _log.info('Created MockDataOrchestrator');

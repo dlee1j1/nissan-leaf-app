@@ -439,8 +439,29 @@ class BluetoothDeviceManager {
         return null;
       }
 
+      // TEMPORARY (data-pipeline plan, Phase A): speed/odometer/ambientTemp
+      // reads purely to verify their decode formulas against the real car -
+      // never persisted to Reading/the DB/MQTT (see DirectOBDOrchestrator).
+      // Best-effort and non-fatal: a failure here must never break the
+      // primary lbc/range collection above. Remove once Phase A is done and
+      // either these are wired in for real (Phase B) or the formulas are
+      // found wanting.
+      final verificationData = <String, dynamic>{};
+      for (final cmd in [OBDCommand.speed, OBDCommand.odometer, OBDCommand.ambientTemp]) {
+        try {
+          verificationData.addAll(await cmd.run());
+        } catch (e) {
+          _log.warning('Verification command ${cmd.name} failed: $e');
+        }
+      }
+
       _lastErrorMessage = null; // this cycle succeeded - stay connected
-      return {...batteryData, ...rangeData, 'timestamp': DateTime.now().millisecondsSinceEpoch};
+      return {
+        ...batteryData,
+        ...rangeData,
+        ...verificationData,
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      };
     } catch (e) {
       _lastErrorMessage = 'Error collecting data: $e';
       _log.severe('Error collecting data: $e');
