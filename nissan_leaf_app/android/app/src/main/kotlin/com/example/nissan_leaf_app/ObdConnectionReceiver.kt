@@ -21,9 +21,11 @@ import java.time.LocalDateTime
  * connects to a recognised Bluetooth device on car power-on — the Leaf head unit
  * ("MY LEAF") or the OBD dongle. See issues #3 and #13.
  *
- * Start only. There is no disconnect handler: `BluetoothDeviceManager` drops the
- * dongle link after every collection cycle, so `ACL_DISCONNECTED` is noise. The
- * service stops itself after N failed cycles.
+ * Start only. There is no disconnect handler - never was one to begin with
+ * (#13/#14), and a disconnect isn't unambiguous noise anymore now that
+ * `BluetoothDeviceManager` only drops the link on a failed cycle rather than
+ * every cycle (#17). The service stops itself after N failed cycles instead,
+ * which is the same signal debounced rather than reacted to on the first hit.
  *
  * This class is only the adapter - it pulls values out of the framework, hands
  * them to [ObdConnectionPolicy.decide], and carries out the result. The decision

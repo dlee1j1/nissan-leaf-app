@@ -80,6 +80,16 @@ class ForegroundTaskWrapper {
 /// Main entry point for the foreground task
 @pragma('vm:entry-point')
 void backgroundServiceEntryPoint() {
+  // SimpleLogger is a singleton, but only within the isolate that
+  // constructs it - this isolate's copy is distinct from the one main.dart
+  // wires up for the UI's LogViewer (see #20 follow-up). Forward every log
+  // line to the main isolate over the same message channel used for
+  // getStatus/refreshNow so LogViewer can show what the real background
+  // service is doing, not just what the UI isolate happens to be doing.
+  SimpleLogger().onLogged = (log, info) {
+    FlutterForegroundTask.sendDataToMain({'type': 'log', 'message': log});
+  };
+
   // Initialize the task handler
   SimpleLogger().info("BackgroundServiceEntryPoint called!!!");
   FlutterForegroundTask.setTaskHandler(BackgroundService());

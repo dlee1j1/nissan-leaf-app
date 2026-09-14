@@ -61,6 +61,10 @@ void main() {
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
     mockOrchestrator = MockDirectOBDOrchestrator();
+    // Default stub - most tests don't care about the connection state
+    // (see #20's isConnected follow-up), just that _statusSnapshot() can
+    // read it without a MissingStubError/null-cast on a fresh mock.
+    when(() => mockOrchestrator.isConnected).thenReturn(false);
     registerFallbackValue(<String, dynamic>{});
     registerFallbackValue(DateTime.now());
   });
@@ -141,7 +145,12 @@ void main() {
       expect(heartbeatLog().existsSync(), isTrue);
       final contents = await heartbeatLog().readAsString();
       expect(contents, contains('start (system)'));
+      expect(contents, contains('cycle-start trigger='));
       expect(contents, contains('cycle trigger='));
+      // Every line carries which instance wrote it (see #9/#3) - two
+      // BackgroundServices, one per isolate, can be alive and writing to
+      // this same file at once.
+      expect(contents, matches(RegExp(r'\[\S+\]')));
     });
 
     test('onStart stops the service and logs an abort when a permission is missing', () async {
@@ -150,12 +159,22 @@ void main() {
       backgroundService = BackgroundService();
       backgroundService.setOrchestratorForTesting(mockOrchestrator);
       clearInteractions(mockOrchestrator);
+      final sent = <Object>[];
+      backgroundService.setSendToMainForTesting(sent.add);
 
       await backgroundService.onStart(DateTime.now(), TaskStarter.system);
 
       verifyNever(() => mockOrchestrator.collectData());
       final contents = await heartbeatLog().readAsString();
       expect(contents, contains('abort - missing prerequisites'));
+      // A restart-from-stopped orchestrator (#20 follow-up) is waiting on
+      // this message, not just any timer cycle's - it must arrive even when
+      // startup fails before execute() ever runs, or that wait just times out.
+      expect(sent, hasLength(1));
+      final reply = sent.single as Map;
+      expect(reply['type'], 'startupResult');
+      expect(reply['success'], false);
+      expect(reply['reason'], contains('missing prerequisites'));
     });
 
     test('stops itself after N consecutive failed cycles', () async {
@@ -176,6 +195,119 @@ void main() {
       final result = await backgroundService.collectData();
       expect(result, false);
       verifyNever(() => mockOrchestrator.collectData());
+    });
+  });
+
+  group('UI messaging (#20)', () {
+    late List<Object> sentMessages;
+
+    setUp(() {
+      BackgroundService.resetForTesting();
+      backgroundService = BackgroundService(orchestrator: mockOrchestrator);
+      sentMessages = [];
+      backgroundService.setSendToMainForTesting(sentMessages.add);
+    });
+
+    test('getStatus replies with a status snapshot', () {
+      backgroundService.onReceiveData({'command': 'getStatus'});
+
+      expect(sentMessages, hasLength(1));
+      final reply = sentMessages.single as Map;
+      expect(reply['type'], 'status');
+      expect(reply.containsKey('running'), isTrue);
+      expect(reply.containsKey('executing'), isTrue);
+      expect(reply.containsKey('connected'), isTrue);
+    });
+
+    test('getStatus reports the real dongle connection, not just service-alive', () {
+      // The distinction this whole follow-up exists for (#20): the service
+      // can be running with the dongle currently disconnected (#17).
+      when(() => mockOrchestrator.isConnected).thenReturn(true);
+      backgroundService.onReceiveData({'command': 'getStatus'});
+      expect((sentMessages.single as Map)['connected'], true);
+
+      sentMessages.clear();
+      when(() => mockOrchestrator.isConnected).thenReturn(false);
+      backgroundService.onReceiveData({'command': 'getStatus'});
+      expect((sentMessages.single as Map)['connected'], false);
+    });
+
+    test('refreshNow runs a real collection and replies with the result', () async {
+      when(() => mockOrchestrator.collectData()).thenAnswer((_) async => true);
+
+      backgroundService.onReceiveData({'command': 'refreshNow'});
+      // execute()'s completion callback runs on a later microtask.
+      await Future.delayed(Duration.zero);
+      await Future.delayed(Duration.zero);
+
+      verify(() => mockOrchestrator.collectData()).called(1);
+      expect(sentMessages, hasLength(1));
+      final reply = sentMessages.single as Map;
+      expect(reply['type'], 'refreshResult');
+      expect(reply['success'], true);
+    });
+
+    test('refreshNow replies busy instead of double-collecting while already executing', () async {
+      final collecting = Completer<bool>();
+      when(() => mockOrchestrator.collectData()).thenAnswer((_) => collecting.future);
+
+      unawaited(backgroundService.collectData()); // leaves _executing true
+      await Future.delayed(Duration.zero);
+
+      backgroundService.onReceiveData({'command': 'refreshNow'});
+
+      expect(sentMessages, hasLength(1));
+      final reply = sentMessages.single as Map;
+      expect(reply['type'], 'refreshResult');
+      expect(reply['success'], false);
+      expect(reply['reason'], 'busy');
+
+      collecting.complete(true); // let the in-flight one finish, nothing left hanging
+      await Future.delayed(Duration.zero);
+    });
+
+    test('refreshNow replies stopped once the service has self-stopped', () async {
+      when(() => mockOrchestrator.collectData()).thenAnswer((_) async => false);
+      for (var i = 0; i < BackgroundService.maxConsecutiveFailures; i++) {
+        await backgroundService.collectData();
+      }
+
+      backgroundService.onReceiveData({'command': 'refreshNow'});
+
+      expect(sentMessages, hasLength(1));
+      final reply = sentMessages.single as Map;
+      expect(reply['success'], false);
+      expect(reply['reason'], 'stopped');
+    });
+
+    test('onStart sends a startupResult message once its initial cycle succeeds', () async {
+      when(() => mockOrchestrator.collectData()).thenAnswer((_) async => true);
+
+      await backgroundService.onStart(DateTime.now(), TaskStarter.developer);
+
+      final reply = sentMessages.last as Map;
+      expect(reply['type'], 'startupResult');
+      expect(reply['success'], true);
+    });
+
+    test('onStart sends a failed startupResult when its initial cycle fails', () async {
+      when(() => mockOrchestrator.collectData()).thenAnswer((_) async => false);
+
+      await backgroundService.onStart(DateTime.now(), TaskStarter.developer);
+
+      final reply = sentMessages.last as Map;
+      expect(reply['type'], 'startupResult');
+      expect(reply['success'], false);
+    });
+
+    test('unknown command is ignored without sending anything', () {
+      backgroundService.onReceiveData({'command': 'doTheThing'});
+      expect(sentMessages, isEmpty);
+    });
+
+    test('malformed data is ignored without crashing', () {
+      backgroundService.onReceiveData('not a map');
+      expect(sentMessages, isEmpty);
     });
   });
 }

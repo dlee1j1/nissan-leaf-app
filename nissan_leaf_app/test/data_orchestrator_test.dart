@@ -1,4 +1,5 @@
 // test/data_orchestrator_test.dart
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:nissan_leaf_app/data_orchestrator.dart';
@@ -330,6 +331,210 @@ void main() {
             estimatedRange: any(named: 'estimatedRange'),
             sessionId: any(named: 'sessionId'),
           )).called(1);
+    });
+  });
+
+  group('BackgroundServiceOrchestrator (#20)', () {
+    late MockReadingsDatabase mockDb;
+    late List<DataCallback> registeredCallbacks;
+    late List<Object> sentCommands;
+
+    BackgroundServiceOrchestrator buildOrchestrator({
+      required bool isRunning,
+      Future<bool> Function()? startService,
+    }) {
+      registeredCallbacks = [];
+      sentCommands = [];
+      return BackgroundServiceOrchestrator(
+        db: mockDb,
+        isServiceRunning: () async => isRunning,
+        startService: startService ?? () async => true,
+        sendDataToTask: sentCommands.add,
+        addTaskDataCallback: registeredCallbacks.add,
+        removeTaskDataCallback: registeredCallbacks.remove,
+      );
+    }
+
+    setUp(() {
+      mockDb = MockReadingsDatabase();
+    });
+
+    group('when the service is not running (restart-from-stopped, #20 follow-up)', () {
+      test('starts the service and reads the reading back once startupResult succeeds', () async {
+        final reading = Reading(
+          timestamp: DateTime.fromMillisecondsSinceEpoch(1234),
+          stateOfCharge: 80.0,
+          batteryHealth: 90.0,
+          batteryVoltage: 360.0,
+          batteryCapacity: 56.0,
+          estimatedRange: 150.0,
+        );
+        when(() => mockDb.getMostRecentReading()).thenAnswer((_) async => reading);
+        final orchestrator = buildOrchestrator(isRunning: false);
+
+        final resultFuture = orchestrator.collectData();
+        await Future.delayed(Duration.zero);
+
+        // No refreshNow (or any other command) is sent - onStart()'s own
+        // initial cycle is the read, not a message this orchestrator asks for.
+        expect(sentCommands, isEmpty);
+        expect(registeredCallbacks, hasLength(1));
+        registeredCallbacks.single({'type': 'startupResult', 'success': true, 'connected': true});
+
+        final result = await resultFuture;
+
+        expect(result, true);
+        expect(orchestrator.isConnected, true);
+        expect(registeredCallbacks, isEmpty);
+      });
+
+      test('fails without waiting for a message if the service fails to start', () async {
+        final orchestrator = buildOrchestrator(isRunning: false, startService: () async => false);
+
+        final result = await orchestrator.collectData();
+
+        expect(result, false);
+        expect(orchestrator.lastFailureReason, contains('Failed to start'));
+        expect(sentCommands, isEmpty);
+        expect(registeredCallbacks, isEmpty);
+      });
+
+      test('surfaces a failed startupResult as the failure reason', () async {
+        final orchestrator = buildOrchestrator(isRunning: false);
+
+        final resultFuture = orchestrator.collectData();
+        await Future.delayed(Duration.zero);
+        registeredCallbacks.single(
+          {'type': 'startupResult', 'success': false, 'reason': 'No Bluetooth devices in range'},
+        );
+
+        final result = await resultFuture;
+
+        expect(result, false);
+        expect(orchestrator.lastFailureReason, 'No Bluetooth devices in range');
+        verifyNever(() => mockDb.getMostRecentReading());
+      });
+
+      test('times out if the newly started service never reports a startupResult', () {
+        runWithFakeAsync((fake) async {
+          final orchestrator = buildOrchestrator(isRunning: false);
+
+          final resultFuture = orchestrator.collectData();
+          fake.elapse(const Duration(seconds: 31));
+          final result = await resultFuture;
+
+          expect(result, false);
+          expect(orchestrator.lastFailureReason, contains('Timed out'));
+          expect(registeredCallbacks, isEmpty);
+        });
+      });
+    });
+
+    test('on a successful refresh, reads the reading back from the database', () async {
+      final orchestrator = buildOrchestrator(isRunning: true);
+      final reading = Reading(
+        timestamp: DateTime.fromMillisecondsSinceEpoch(1234),
+        stateOfCharge: 80.0,
+        batteryHealth: 90.0,
+        batteryVoltage: 360.0,
+        batteryCapacity: 56.0,
+        estimatedRange: 150.0,
+      );
+      when(() => mockDb.getMostRecentReading()).thenAnswer((_) async => reading);
+
+      final resultFuture = orchestrator.collectData();
+      // sendDataToTask happens synchronously inside collectData(); reply once
+      // the callback is registered.
+      await Future.delayed(Duration.zero);
+      expect(sentCommands, [
+        {'command': 'refreshNow'}
+      ]);
+      expect(registeredCallbacks, hasLength(1));
+      registeredCallbacks.single({'type': 'refreshResult', 'success': true});
+
+      final result = await resultFuture;
+
+      expect(result, true);
+      expect(registeredCallbacks, isEmpty); // callback unregistered after replying
+    });
+
+    test('a busy/stopped/etc reply is surfaced as the failure reason', () async {
+      final orchestrator = buildOrchestrator(isRunning: true);
+
+      final resultFuture = orchestrator.collectData();
+      await Future.delayed(Duration.zero);
+      registeredCallbacks.single({'type': 'refreshResult', 'success': false, 'reason': 'busy'});
+
+      final result = await resultFuture;
+
+      expect(result, false);
+      expect(orchestrator.lastFailureReason, 'busy');
+      verifyNever(() => mockDb.getMostRecentReading());
+    });
+
+    test('times out if the task never replies', () {
+      runWithFakeAsync((fake) async {
+        final orchestrator = buildOrchestrator(isRunning: true);
+
+        final resultFuture = orchestrator.collectData();
+        fake.elapse(const Duration(seconds: 21));
+        final result = await resultFuture;
+
+        expect(result, false);
+        expect(orchestrator.lastFailureReason, contains('Timed out'));
+        expect(registeredCallbacks, isEmpty);
+      });
+    });
+
+    test('reports an error if no reading is in the database after a successful refresh', () async {
+      final orchestrator = buildOrchestrator(isRunning: true);
+      when(() => mockDb.getMostRecentReading()).thenAnswer((_) async => null);
+
+      final resultFuture = orchestrator.collectData();
+      await Future.delayed(Duration.zero);
+      registeredCallbacks.single({'type': 'refreshResult', 'success': true});
+
+      final result = await resultFuture;
+
+      expect(result, false);
+      expect(orchestrator.lastFailureReason, contains('No reading available'));
+    });
+
+    test('isConnected defaults to false and updates from a refreshNow reply', () async {
+      final orchestrator = buildOrchestrator(isRunning: true);
+      when(() => mockDb.getMostRecentReading()).thenAnswer((_) async => null);
+      expect(orchestrator.isConnected, false);
+
+      final resultFuture = orchestrator.collectData();
+      await Future.delayed(Duration.zero);
+      registeredCallbacks.single({'type': 'refreshResult', 'success': true, 'connected': true});
+      await resultFuture;
+
+      expect(orchestrator.isConnected, true);
+    });
+
+    test('refreshStatus asks for status without running a collection', () async {
+      final orchestrator = buildOrchestrator(isRunning: true);
+
+      final refreshFuture = orchestrator.refreshStatus();
+      await Future.delayed(Duration.zero);
+      expect(sentCommands, [
+        {'command': 'getStatus'}
+      ]);
+      registeredCallbacks.single({'type': 'status', 'connected': true});
+      await refreshFuture;
+
+      expect(orchestrator.isConnected, true);
+      verifyNever(() => mockDb.getMostRecentReading());
+    });
+
+    test('refreshStatus reports disconnected without asking when the service is not running', () async {
+      final orchestrator = buildOrchestrator(isRunning: false);
+
+      await orchestrator.refreshStatus();
+
+      expect(orchestrator.isConnected, false);
+      expect(sentCommands, isEmpty);
     });
   });
 }

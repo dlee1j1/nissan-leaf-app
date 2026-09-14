@@ -154,9 +154,12 @@ void main() {
     // Set up mock preferences storage
     SharedPreferences.setMockInitialValues({});
 
-    // Initialize test helper and manager
+    // Initialize test helper and manager. A fresh instance per test (not
+    // .instance) - see #9/class doc - so nothing from a previous test's
+    // connection state can leak in, without needing to enumerate every
+    // field a shared instance might carry over.
     bluetoothHelper = BluetoothServiceTestHelper();
-    manager = BluetoothDeviceManager.instance;
+    manager = BluetoothDeviceManager();
     manager.setBluetoothServiceForTesting(bluetoothHelper.mock);
     // MockObdController's single positional param is a canned response
     // string (see mock_obd_controller.dart) - unrelated to what a real
@@ -531,6 +534,49 @@ void main() {
 
       // Assert - should disconnect despite the error
       bluetoothHelper.verifyDisconnectionFrom(mockDevice);
+    });
+  });
+
+  group('Connection Reuse Across Cycles (#17)', () {
+    setUp(() {
+      OBDCommand.setTestRunOverride((cmd) async {
+        if (cmd == OBDCommand.lbc) return {'stateOfCharge': 80};
+        return {'raw_response': 'ok'};
+      });
+    });
+
+    tearDown(() {
+      OBDCommand.setTestRunOverride(null);
+    });
+
+    test('a successful cycle stays connected instead of disconnecting', () async {
+      bluetoothHelper.setupBluetoothOn();
+      bluetoothHelper.setupSuccessfulScan([mockScanResult]);
+      bluetoothHelper.setupSuccessfulConnection(mockDevice);
+      bluetoothHelper.setupSuccessfulServiceDiscovery(mockDevice, [mockService]);
+
+      final result = await manager.collectCarData();
+
+      expect(result, isNotNull);
+      expect(manager.isConnected, true);
+      verifyNever(() => bluetoothHelper.mock.disconnectDevice(mockDevice));
+    });
+
+    test('a second cycle on an already-connected device skips scan/connect entirely', () async {
+      bluetoothHelper.setupBluetoothOn();
+      bluetoothHelper.setupSuccessfulScan([mockScanResult]);
+      bluetoothHelper.setupSuccessfulConnection(mockDevice);
+      bluetoothHelper.setupSuccessfulServiceDiscovery(mockDevice, [mockService]);
+
+      final first = await manager.collectCarData();
+      expect(first, isNotNull);
+
+      final second = await manager.collectCarData();
+
+      expect(second, isNotNull);
+      // Only the first cycle should have needed to scan/connect - see #17.
+      bluetoothHelper.verifyScanAttempted();
+      verify(() => bluetoothHelper.mock.connectToDevice(mockDevice)).called(1);
     });
   });
 }

@@ -3,8 +3,20 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:nissan_leaf_app/pages/dashboard_page.dart';
 import 'package:nissan_leaf_app/components/battery_status_widget.dart';
 import 'package:nissan_leaf_app/components/readings_chart_widget.dart';
+import 'package:nissan_leaf_app/data_orchestrator.dart';
 
 void main() {
+  group('DataOrchestratorFactory (#20)', () {
+    test('AppMode.real resolves to BackgroundServiceOrchestrator, not a direct BLE collector', () {
+      // Regression guard: AppMode.real must never construct
+      // BackgroundService()/BluetoothDeviceManager directly in the UI
+      // isolate - that's the two-collectors-racing-one-dongle bug #20
+      // fixes. It must go through the message-passing orchestrator instead.
+      final orchestrator = DataOrchestratorFactory.create(AppMode.real);
+      expect(orchestrator, isA<BackgroundServiceOrchestrator>());
+    });
+  });
+
   group('DashboardPage', () {
 /*
     testWidgets('renders correctly without OBD controller', (WidgetTester tester) async {

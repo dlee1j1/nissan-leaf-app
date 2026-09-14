@@ -1,6 +1,7 @@
 // background_service.dart - the foreground-task handler
 import 'dart:async';
 import 'dart:io';
+import 'dart:isolate' show Isolate;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:meta/meta.dart';
@@ -21,11 +22,14 @@ enum TriggerType {
 ///
 /// Lifecycle is driven from the native side: `ObdConnectionReceiver` starts the
 /// service when a recognised Bluetooth device connects (the Leaf head unit or
-/// the OBD dongle). There is no disconnect-based stop — the collection flow
-/// drops the dongle link every cycle by design. Instead the service stops
-/// itself once [maxConsecutiveFailures] cycles have failed back to back, which
-/// means the dongle is unreachable and we are almost certainly parked. See
-/// issue #13.
+/// the OBD dongle). There is no disconnect-based stop. A successful cycle
+/// keeps the dongle link open for the next one (see #17); a failed cycle
+/// drops it, but the receiver never subscribed to `ACL_DISCONNECTED` (#13/#14
+/// - a bare drop mid-drive was noise back when every cycle produced one).
+/// Reacting to a single disconnect now would mean the same thing, just
+/// undebounced - the service instead stops itself once
+/// [maxConsecutiveFailures] cycles have failed back to back, which means the
+/// dongle is unreachable and we are almost certainly parked. See issue #13.
 class BackgroundService extends TaskHandler implements DataOrchestrator {
   static BackgroundService? _instance;
 
@@ -44,6 +48,37 @@ class BackgroundService extends TaskHandler implements DataOrchestrator {
   bool _stopRequested = false;
   Timer? _timer;
   bool _executing = false;
+
+  /// Tags every heartbeat line with which BackgroundService wrote it.
+  /// BackgroundService is constructed independently in at least two places
+  /// that can be alive simultaneously: the real flutter_foreground_task
+  /// background isolate, and DashboardPage's own copy via
+  /// DataOrchestratorFactory.create(AppMode.real) in the main UI isolate
+  /// (see #9) - opening the dashboard arms a second, independent
+  /// execute()/timer loop there. Both write identically-formatted lines to
+  /// the same heartbeat file, so without a tag there is no way to tell
+  /// after the fact whether a given success came from the real headless
+  /// service or from the UI's parallel one - a question that turned out to
+  /// matter (see #3).
+  static int _instanceCounter = 0;
+  final String _instanceTag = kIsWeb
+      ? 'web'
+      : '${Isolate.current.debugName?.isEmpty ?? true ? "?" : Isolate.current.debugName}'
+          '/${Isolate.current.hashCode}#${_instanceCounter++}';
+
+  /// How this instance replies to the UI isolate (see #20 - restoring the
+  /// message-passing pattern the pre-flutter_foreground_task
+  /// BackgroundServiceOrchestrator used, lost in the 2025-03-21 plugin
+  /// migration). Only the real background-isolate instance ever has a UI
+  /// listening on the other end - FlutterForegroundTask.sendDataToMain is a
+  /// safe no-op if IsolateNameServer has no port registered under its name,
+  /// so this never throws even when called from an instance nobody's
+  /// listening to (e.g. a stray UI-isolate one, or in tests).
+  void Function(Object data) _sendToMain = FlutterForegroundTask.sendDataToMain;
+  @visibleForTesting
+  void setSendToMainForTesting(void Function(Object data) fn) {
+    _sendToMain = fn;
+  }
 
   /// Factory constructor that returns the singleton instance.
   factory BackgroundService({DataOrchestrator? orchestrator}) {
@@ -76,6 +111,12 @@ class BackgroundService extends TaskHandler implements DataOrchestrator {
   String? get lastFailureReason => _orchestrator.lastFailureReason;
 
   @override
+  bool get isConnected => _orchestrator.isConnected;
+
+  @override
+  Future<void> refreshStatus() async {} // isConnected is already live here
+
+  @override
   Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
     try {
       _log.info('Background service started - starter: ${starter.name}');
@@ -92,6 +133,12 @@ class BackgroundService extends TaskHandler implements DataOrchestrator {
       if (missing.isNotEmpty) {
         _log.severe('Missing prerequisites, stopping service: ${missing.join(', ')}');
         await _appendHeartbeat('abort - missing prerequisites: ${missing.join(', ')}');
+        _sendToMain({
+          ..._statusSnapshot(),
+          'type': 'startupResult',
+          'success': false,
+          'reason': 'missing prerequisites: ${missing.join(', ')}',
+        });
         try {
           await FlutterForegroundTask.stopService();
         } catch (e) {
@@ -104,6 +151,15 @@ class BackgroundService extends TaskHandler implements DataOrchestrator {
         await execute(TriggerType.manual);
       } catch (e) {
         _log.severe('Error during initial collection: $e');
+      } finally {
+        // Restarting-from-stopped (see #20 follow-up: pull-to-refresh
+        // starting a self-stopped service) needs to know when *this specific*
+        // startup cycle finishes, not just any cycle - a coincidental timer
+        // cycle finishing around the same moment must not satisfy that wait.
+        // A distinct message type, sent only here, keeps it unambiguous
+        // without adding a second request/reply round trip on top of the
+        // startup that's already happening.
+        _sendToMain({..._statusSnapshot(), 'type': 'startupResult', 'success': _lastCollectionSuccess});
       }
     } catch (e, stackTrace) {
       _log.severe('Fatal error in onStart: $e\n$stackTrace');
@@ -132,13 +188,28 @@ class BackgroundService extends TaskHandler implements DataOrchestrator {
 
   /// Append a timestamped line to the heartbeat log so a completed drive can be
   /// confirmed after the fact (the only verification available without a rig).
-  Future<void> _appendHeartbeat(String note) async {
+  ///
+  /// Chained onto a queue rather than writing directly: two `unawaited()`
+  /// callers close together (see execute()'s cycle-start/cycle-complete
+  /// pair) would otherwise race the same file - this method itself awaits
+  /// `getApplicationDocumentsDirectory()` before ever touching the file, so
+  /// two near-simultaneous calls can genuinely overlap, and the loser's
+  /// write can be silently dropped rather than merely reordered. Found by
+  /// the cycle-start line vanishing outright in a test where collectData()
+  /// resolves fast enough for exactly that race to happen every time.
+  Future<void> _heartbeatQueue = Future.value();
+  Future<void> _appendHeartbeat(String note) {
+    _heartbeatQueue = _heartbeatQueue.then((_) => _doAppendHeartbeat(note));
+    return _heartbeatQueue;
+  }
+
+  Future<void> _doAppendHeartbeat(String note) async {
     if (kIsWeb) return;
     try {
       final dir = await getApplicationDocumentsDirectory();
       final file = File('${dir.path}/service_heartbeat.log');
       await file.writeAsString(
-        '${DateTime.now().toIso8601String()} $note\n',
+        '${DateTime.now().toIso8601String()} [$_instanceTag] $note\n',
         mode: FileMode.append,
         flush: true,
       );
@@ -188,6 +259,18 @@ class BackgroundService extends TaskHandler implements DataOrchestrator {
       _log.info('Executing based on $trigger');
       _lastTrigger = trigger;
       _timer?.cancel();
+
+      // Fire-and-forget, written before any await below - if collectData()
+      // hangs forever (e.g. a BLE connect that never resolves or throws;
+      // nothing in that chain is currently timeout-guarded), the *completion*
+      // heartbeat a few lines down never gets a chance to write, and the log
+      // goes silent - indistinguishable from the isolate never having started
+      // at all. This line is what tells the two apart after the fact: seeing
+      // it with no matching completion line means execute() began and got
+      // stuck inside; seeing neither means the isolate itself likely never
+      // ran. See issue #3 - a real drive lost ~53 minutes to exactly this
+      // ambiguity with no way to resolve it after the fact.
+      unawaited(_appendHeartbeat('cycle-start trigger=${trigger.name}'));
 
       try {
         FlutterForegroundTask.updateService(
@@ -261,6 +344,59 @@ class BackgroundService extends TaskHandler implements DataOrchestrator {
   void onRepeatEvent(DateTime timestamp) {
     // Unused: eventAction is nothing(). Scheduling is driven by our own timer
     // (see _scheduleNextCollection); liveness is tracked in service_heartbeat.log.
+  }
+
+  /// Handles commands sent from the UI isolate via
+  /// `FlutterForegroundTask.sendDataToTask` (see #20). This is the only
+  /// place the UI should ever learn about or influence collection state -
+  /// it should not be constructing its own BackgroundService/
+  /// BluetoothDeviceManager and colliding with this one over the same
+  /// physical BLE connection.
+  @override
+  void onReceiveData(Object data) {
+    if (data is! Map) {
+      _log.warning('Received malformed data from UI: $data');
+      return;
+    }
+    switch (data['command']) {
+      case 'getStatus':
+        _sendToMain(_statusSnapshot());
+        break;
+      case 'refreshNow':
+        _handleRefreshNow();
+        break;
+      default:
+        _log.warning('Unknown command from UI: ${data['command']}');
+    }
+  }
+
+  Map<String, dynamic> _statusSnapshot() => {
+        'type': 'status',
+        'running': !_stopRequested,
+        'executing': _executing,
+        'lastTrigger': _lastTrigger.name,
+        'lastCollectionSuccess': _lastCollectionSuccess,
+        'consecutiveFailures': _consecutiveFailures,
+        // The actual dongle link, not just "is the service alive" - these
+        // diverge for long stretches between a failed cycle's disconnect
+        // and the next reconnect attempt (#17). See the isConnected doc on
+        // DataOrchestrator for why this needs to travel in the message
+        // rather than being asked for synchronously.
+        'connected': _orchestrator.isConnected,
+      };
+
+  void _handleRefreshNow() {
+    if (_executing) {
+      _sendToMain({..._statusSnapshot(), 'type': 'refreshResult', 'success': false, 'reason': 'busy'});
+      return;
+    }
+    if (_stopRequested) {
+      _sendToMain({..._statusSnapshot(), 'type': 'refreshResult', 'success': false, 'reason': 'stopped'});
+      return;
+    }
+    execute(TriggerType.manual).then((_) {
+      _sendToMain({..._statusSnapshot(), 'type': 'refreshResult', 'success': _lastCollectionSuccess});
+    });
   }
 
   @override

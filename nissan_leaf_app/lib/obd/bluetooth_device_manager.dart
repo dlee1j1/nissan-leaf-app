@@ -17,12 +17,32 @@ const SERVICE_UUID = "0000ffe0-0000-1000-8000-00805f9b34fb";
 // ignore: constant_identifier_names
 const CHARACTERISTIC_UUID = "0000ffe1-0000-1000-8000-00805f9b34fb";
 
-/// A singleton manager class that handles all Bluetooth operations for OBD connectivity
+/// Manages all Bluetooth operations for OBD connectivity.
+///
+/// A plain, normally-constructible class - not a baked-in singleton. [instance]
+/// is a global accessor over the app's one real instance; it's convenience,
+/// not a constraint. Tests construct their own via `BluetoothDeviceManager()`
+/// directly, so each test starts from genuinely clean state instead of
+/// needing to remember to reset every field a shared instance might carry
+/// over from the previous test (see #9, which did the same for
+/// BackgroundService - this class had the identical problem).
+///
+/// [instance] is only ever reached through `OBDConnector`, from two places:
+/// `DirectOBDOrchestrator` (the real background-task isolate's collector)
+/// and `connection_page.dart` (the UI isolate's manual pairing flow).
+/// `DashboardPage` deliberately does *not* construct one any more - it used
+/// to, and that was a UI isolate independently driving the same physical
+/// BLE connection the background isolate was using, which is the collision
+/// issue #20 traces and fixes. `.instance` being per-isolate (see the "Two
+/// Isolates" section of `Background_Service_Architecture.md`) means the
+/// background-task isolate's instance and the UI isolate's instance here
+/// were always two different objects regardless - the fix wasn't sharing
+/// this instance more carefully, it was the UI not touching Bluetooth at
+/// all outside the explicit, occasional, user-initiated pairing flow.
 class BluetoothDeviceManager {
-  // Singleton pattern
-  static final BluetoothDeviceManager _instance = BluetoothDeviceManager._internal();
-  static BluetoothDeviceManager get instance => _instance;
-  BluetoothDeviceManager._internal();
+  BluetoothDeviceManager();
+
+  static final BluetoothDeviceManager instance = BluetoothDeviceManager();
 
   // Allow dependency injection for testing
   BluetoothServiceInterface _bluetoothService = FlutterBluetoothService();
@@ -387,7 +407,8 @@ class BluetoothDeviceManager {
         bool connected = await autoConnectToObd();
         if (!connected) {
           // autoConnectToObd already set _lastErrorMessage with the specific
-          // reason (no devices in range, scan error, no OBD match, ...).
+          // reason (no devices in range, scan error, no OBD match, ...) and
+          // already disconnected on its own failure path.
           _log.warning('Failed to connect to OBD device, cannot collect data');
           return null;
         }
@@ -398,25 +419,33 @@ class BluetoothDeviceManager {
       }
     }
 
+    // Deliberately no `finally { disconnect(); }` here (see #17) - a
+    // successful cycle stays connected so the *next* cycle can skip the
+    // scan+connect+probe round-trip entirely via the `if (!isConnected)`
+    // check above. Re-entrancy is guarded elsewhere (collectData()'s
+    // SingleFlight, autoConnectToObd()'s SingleFlight, connectToDevice()'s
+    // _isConnecting), not by this method always tearing the link down.
+    // Disconnect deliberately on failure - a broken command is reason enough
+    // to distrust this connection and force a clean reconnect next time,
+    // and it's what turns a live OBDBLE link back into an ACL_DISCONNECTED
+    // the receiver could someday act on (it doesn't yet - see #13).
     try {
-      // Collect data using existing commands
       final batteryData = await OBDCommand.lbc.run();
       final rangeData = await OBDCommand.rangeRemaining.run();
 
       if (batteryData.isEmpty) {
         _lastErrorMessage = 'OBD device returned no battery data';
+        await disconnect();
         return null;
       }
 
-      _lastErrorMessage = null; // this cycle succeeded
+      _lastErrorMessage = null; // this cycle succeeded - stay connected
       return {...batteryData, ...rangeData, 'timestamp': DateTime.now().millisecondsSinceEpoch};
     } catch (e) {
       _lastErrorMessage = 'Error collecting data: $e';
       _log.severe('Error collecting data: $e');
-      return null;
-    } finally {
-      // always disconnect
       await disconnect();
+      return null;
     }
   }
 
