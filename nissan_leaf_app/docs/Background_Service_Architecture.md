@@ -133,6 +133,27 @@ REBOOT whenever the plugin's own copy is missing - see the doc comments on
 `restoreCallbackHandleIfMissing()` and `startService()` for the full
 mechanism. Full investigation trail lives on the issue, not here.
 
+Also added since: `BackgroundService.isIsolateAlive` (see
+`background_service.dart` under Key Components below) gives the UI a
+direct, instant way to detect this exact failure signature -
+`isServiceRunning() && !isIsolateAlive` - rather than only inferring it
+from a `refreshNow`/`getStatus` timeout.
+
+**Known follow-up, not yet done:** detecting a zombie this way doesn't
+mean the UI can currently *recover* from one via `BackgroundServiceOrchestrator
+.collectData()` (pull-to-refresh). That path calls
+`BackgroundServiceController.startService()` only when `isServiceRunning()`
+is false; in the zombie case it's `true`, so `collectData()` takes the
+`refreshNow` branch instead, which just times out (nothing is listening).
+Calling `FlutterForegroundTask.startService()` directly while
+`isRunningService` is `true` doesn't help either - the plugin's own Dart
+code throws `ServiceAlreadyStartedException` before ever reaching native.
+`restartService()` doesn't have that guard, but its native path
+(`ForegroundServiceAction.API_RESTART`) never touches the callback handle,
+so it wouldn't self-heal a missing one the way a REBOOT from
+`ObdConnectionReceiver` now does. Recovering from a UI-detected zombie
+would need its own deliberate design, not a quick call-swap.
+
 ## Four-Part Design
 
 The background functionality is implemented as four distinct components -
@@ -319,6 +340,20 @@ connects until it stops itself:
 - Counts consecutive failed cycles; at `maxConsecutiveFailures` (5) it writes
   `stop: N failed cycles` to the heartbeat and calls `stopService()` — the dongle
   is unreachable, so we've almost certainly parked
+- `markIsolateAlive()`/`isIsolateAlive` (issue #22) — `flutter_foreground_task`
+  exposes nothing, Dart or native, that reflects whether its background
+  isolate ever actually attached; `isRunningService` only reflects OS-level
+  foreground-service promotion, which #22 proved can be `true` for a fully
+  zombied service. `markIsolateAlive()` registers a marker with
+  `IsolateNameServer` as the literal first statement of
+  `backgroundServiceEntryPoint`, before anything else runs; `onDestroy`
+  unregisters it. Since `IsolateNameServer`'s registry is native and
+  process-wide, `isIsolateAlive` answers synchronously from any isolate in
+  the process, including the UI's - no round trip, no timeout, unlike
+  asking the real isolate to reply to a message. `DashboardPage` surfaces
+  `isServiceRunning() && !isIsolateAlive` as a distinct "Service Stalled"
+  status instead of the ambiguous "Looking for Dongle" a zombie used to
+  show.
 
 ### `data_orchestrator.dart`
 

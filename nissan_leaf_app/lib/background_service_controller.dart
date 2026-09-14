@@ -89,6 +89,13 @@ class ForegroundTaskWrapper {
 /// Main entry point for the foreground task
 @pragma('vm:entry-point')
 void backgroundServiceEntryPoint() {
+  // First statement, deliberately before anything else - see issue #22 and
+  // the doc comment on BackgroundService.markIsolateAlive(). This is the
+  // earliest point any Dart code runs in the isolate at all, which is
+  // exactly what needs marking: in the #22 zombie case, not even this
+  // function's own first log line (a few statements below) ever ran.
+  BackgroundService.markIsolateAlive();
+
   // SimpleLogger is a singleton, but only within the isolate that
   // constructs it - this isolate's copy is distinct from the one main.dart
   // wires up for the UI's LogViewer (see #20 follow-up). Forward every log
@@ -281,4 +288,14 @@ class BackgroundServiceController {
 
     return await _foregroundTask.isRunningService;
   }
+
+  /// Whether a background isolate is genuinely alive right now - see issue
+  /// #22. Complementary to [isServiceRunning]: that only reflects whether
+  /// Android promoted the OS-level foreground-service notification, which
+  /// (as #22 proved) can be `true` even when no Dart code ever ran.
+  /// `isServiceRunning() && !isBackgroundIsolateAlive` is the exact
+  /// signature of that bug, detectable instantly - no round trip, no
+  /// timeout, since IsolateNameServer's registry is native and answers
+  /// synchronously.
+  static bool get isBackgroundIsolateAlive => BackgroundService.isIsolateAlive;
 }
