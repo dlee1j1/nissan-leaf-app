@@ -124,7 +124,13 @@ class DirectOBDOrchestrator implements DataOrchestrator {
       }
 
       // TEMPORARY (data-pipeline plan, Phase A) - see lastVerificationData.
-      const verificationKeys = ['speed', 'odometer', 'ambient_temp'];
+      const verificationKeys = [
+        'speed',
+        'odometer',
+        'ambient_temp',
+        'range_remaining_raw_length',
+        'range_remaining_raw_bytes',
+      ];
       final verification = {
         for (final k in verificationKeys)
           if (data.containsKey(k)) k: data[k],

@@ -404,6 +404,8 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     final speed = data['speed'];
     final odometer = data['odometer'];
     final ambientTemp = data['ambient_temp'];
+    final rangeRawLength = data['range_remaining_raw_length'];
+    final rangeRawBytes = data['range_remaining_raw_bytes'];
     return Card(
       color: Colors.amber[50],
       child: Padding(
@@ -419,6 +421,10 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
             Text('Speed: ${speed ?? '--'} km/h  '
                 'Odometer: ${odometer ?? '--'} km  '
                 'Ambient: ${ambientTemp ?? '--'}°C'),
+            if (rangeRawLength != null) ...[
+              const SizedBox(height: 4),
+              Text('Range response: $rangeRawLength bytes -> $rangeRawBytes'),
+            ],
           ],
         ),
       ),

@@ -742,6 +742,16 @@ class _RangeRemainingCommand extends OBDCommand {
   Map<String, dynamic> decode(List<int> data) {
     return {
       'range_remaining': extractInt(data, 3, 5) / 10,
+      // TEMPORARY (data-pipeline plan, Phase A follow-up): range_remaining
+      // is reading a static ~2.4km on the real car despite matching the
+      // documented formula, and the reference project's own command table
+      // declares this response as 13 bytes long while the doc's worked
+      // example shows a 5-byte single frame - this exposes which one
+      // Dennis's car actually sends, to settle whether extractInt(data,3,5)
+      // is landing on the wrong bytes of a longer response. Remove once
+      // diagnosed.
+      'range_remaining_raw_length': data.length,
+      'range_remaining_raw_bytes': data.toString(),
     };
   }
 }
