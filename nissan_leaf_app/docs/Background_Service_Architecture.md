@@ -115,14 +115,23 @@ error rather than hanging, but nothing currently un-sticks the real service
 itself - revisit if that turns out to be a recurring, not merely
 theoretical, failure mode.
 
-**Zombie service (#22):** a worse variant of the gap above - the native
-receiver can get Android to promote the process to a foreground service
-while the Dart `TaskHandler` never attaches at all, so `isServiceRunning()`
-reports "alive" for a service nothing is listening on and
-`refreshNow`/`refreshStatus` just burn their full timeout. Root cause is
-still open as of the `flutter_foreground_task` 11.0.3 bump below - that
-upgrade did not fix it. Full investigation history and evidence lives on
-the issue, not here.
+**Zombie service (#22, fixed):** a worse variant of the gap above - the
+native receiver could get Android to promote the process to a foreground
+service while the Dart `TaskHandler` never attached at all, so
+`isServiceRunning()` reported "alive" for a service nothing was listening
+on and `refreshNow`/`refreshStatus` just burned their full timeout. Root
+cause: `flutter_foreground_task`'s `ForegroundTask.init()` silently skips
+running any Dart code at all - no exception, no log - when its persisted
+Dart callback handle is missing, and `BackgroundService`'s own routine
+"probably parked" self-stop (`FlutterForegroundTask.stopService()`, after
+`maxConsecutiveFailures`) clears that handle as a side effect, with
+nothing re-persisting it until the app is next opened by hand. Fixed by
+backing up the handle to our own prefs key at every normal app launch
+(`BackgroundServiceController.startService()`) and having
+`ObdConnectionReceiver` restore it from that backup before a headless
+REBOOT whenever the plugin's own copy is missing - see the doc comments on
+`restoreCallbackHandleIfMissing()` and `startService()` for the full
+mechanism. Full investigation trail lives on the issue, not here.
 
 ## Four-Part Design
 
@@ -269,6 +278,13 @@ match above — plausible, unverified, and would fail silently if wrong:
   today (a redundant REBOOT just repeats work) but not something anything
   enforces.
 
+`restoreCallbackHandleIfMissing` runs right before every `setServiceStatus`
++ `startForegroundService` call: it checks whether
+`flutter_foreground_task`'s own persisted Dart callback handle is present,
+and restores it from `BackgroundServiceController.startService()`'s backup
+if not. See "Zombie service (#22, fixed)" in "Two Isolates" above for why
+this exists - a no-op in the common case (the handle is already there).
+
 ### `background_service_controller.dart`
 
 Boundary between the Flutter UI and the native foreground service. Key features:
@@ -276,7 +292,10 @@ Boundary between the Flutter UI and the native foreground service. Key features:
 - `initialize()` — notification channel, permission requests, `autoRunOnBoot: false`
 - `startService()` — called once at launch; its job now is to persist the
   notification options and Dart callback handle so `ObdConnectionReceiver` can
-  start the service headless later
+  start the service headless later. Also backs up that same callback handle
+  to our own prefs key (`ObdConnectionReceiver.restoreCallbackHandleIfMissing`
+  restores it from there if the plugin's own copy is ever missing at REBOOT
+  time — see issue #22)
 - Manual `stopService()` / `isServiceRunning()`
 
 ```dart
