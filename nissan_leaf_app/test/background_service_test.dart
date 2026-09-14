@@ -241,8 +241,10 @@ void main() {
       await Future.delayed(Duration.zero);
 
       verify(() => mockOrchestrator.collectData()).called(1);
-      expect(sentMessages, hasLength(1));
-      final reply = sentMessages.single as Map;
+      // Not hasLength(1): a successful cycle also sends a 'newReading' push
+      // ahead of the reply (see #25) - .last matches the pattern the
+      // startupResult tests below already use for the same reason.
+      final reply = sentMessages.last as Map;
       expect(reply['type'], 'refreshResult');
       expect(reply['success'], true);
     });
@@ -308,6 +310,36 @@ void main() {
     test('malformed data is ignored without crashing', () {
       backgroundService.onReceiveData('not a map');
       expect(sentMessages, isEmpty);
+    });
+  });
+
+  group('Proactive data push (#25)', () {
+    late List<Object> sentMessages;
+
+    setUp(() {
+      BackgroundService.resetForTesting();
+      backgroundService = BackgroundService(orchestrator: mockOrchestrator);
+      sentMessages = [];
+      backgroundService.setSendToMainForTesting(sentMessages.add);
+    });
+
+    test('a successful cycle pushes newReading even with no UI request behind it', () async {
+      when(() => mockOrchestrator.collectData()).thenAnswer((_) async => true);
+
+      // A timer-triggered cycle, not something the UI asked for - the
+      // whole point of #25 is that this case previously told the UI
+      // nothing at all.
+      await backgroundService.execute(TriggerType.timer);
+
+      expect(sentMessages.any((m) => m is Map && m['type'] == 'newReading'), isTrue);
+    });
+
+    test('a failed cycle does not push newReading', () async {
+      when(() => mockOrchestrator.collectData()).thenAnswer((_) async => false);
+
+      await backgroundService.execute(TriggerType.timer);
+
+      expect(sentMessages.any((m) => m is Map && m['type'] == 'newReading'), isFalse);
     });
   });
 

@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:nissan_leaf_app/background_service_controller.dart';
 import 'package:nissan_leaf_app/components/log_viewer.dart';
 import 'package:nissan_leaf_app/mqtt_client.dart';
@@ -103,6 +104,17 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   // Orchestrator status
   StreamSubscription? _orchestratorStatusSubscription;
 
+  // Issue #25: the background isolate pushes this proactively on every
+  // successful cycle, not just in reply to something the UI asked for -
+  // see BackgroundService.execute(). Registered for the widget's whole
+  // lifetime (not mode-dependent - mock mode never sends it, so this is a
+  // harmless no-op there), unlike _orchestratorStatusSubscription which
+  // gets torn down and rebuilt on every mode switch.
+  void _onBackgroundServiceData(Object data) {
+    if (data is! Map || data['type'] != 'newReading') return;
+    _refreshCurrentReadingFromDb();
+  }
+
   bool isBackgroundServiceSupported() {
     try {
       // Check for Android or iOS
@@ -121,6 +133,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    FlutterForegroundTask.addTaskDataCallback(_onBackgroundServiceData);
 
     // Set initial mode based on platform
     if (!isBackgroundServiceSupported()) {
@@ -289,6 +302,30 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
         }
       }); // setState
     }); // db.getMostRecentReading.then
+  }
+
+  /// Handles the #25 background push (see _onBackgroundServiceData): picks
+  /// up whatever the service already wrote to the DB on its own timer.
+  /// Deliberately DB-only - unlike _refreshCurrentReading, this must never
+  /// call _orchestrator.collectData(), or every proactive push would
+  /// trigger another live collection round trip right back at the service
+  /// that just finished one.
+  Future<void> _refreshCurrentReadingFromDb() async {
+    final latestDbReading = await _db.getMostRecentReading();
+    if (!mounted || latestDbReading == null) return;
+
+    final isNewer = _currentReading == null || latestDbReading.timestamp.isAfter(_currentReading!.timestamp);
+    final shouldAddToList =
+        _readings.isEmpty || latestDbReading.timestamp.isAfter(_readings.last.timestamp);
+    if (!isNewer && !shouldAddToList) return;
+
+    setState(() {
+      if (isNewer) _currentReading = latestDbReading;
+      if (shouldAddToList) {
+        _readings.add(latestDbReading);
+        _readings.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+      }
+    });
   }
 
   Future<void> _initializeData() async {
@@ -643,6 +680,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   void dispose() {
     _mqttStatusSubscription?.cancel();
     _orchestratorStatusSubscription?.cancel();
+    FlutterForegroundTask.removeTaskDataCallback(_onBackgroundServiceData);
     _orchestrator.dispose();
     WidgetsBinding.instance.removeObserver(this);
     _db.close();

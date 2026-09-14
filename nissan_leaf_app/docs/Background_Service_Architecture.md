@@ -354,6 +354,17 @@ connects until it stops itself:
   `isServiceRunning() && !isIsolateAlive` as a distinct "Service Stalled"
   status instead of the ambiguous "Looking for Dongle" a zombie used to
   show.
+- Pushes `{'type': 'newReading'}` via `_sendToMain` on every successful
+  cycle, timer-triggered ones included (issue #25) - previously only
+  UI-initiated refreshes (`refreshNow`'s reply) or the first post-start
+  cycle (`startupResult`) told the UI anything; an ordinary timer cycle
+  succeeding on its own left a dashboard that happened to be open no way
+  to know new data existed until the next explicit ask. `DashboardPage`
+  listens via a permanent `addTaskDataCallback` (the same pattern
+  `main.dart` already uses for log forwarding) and reloads the current
+  reading from the DB - deliberately DB-only, never routed through
+  `_orchestrator.collectData()`, so a push can't trigger another live
+  collection right back at the service that just finished one.
 
 ### `data_orchestrator.dart`
 
