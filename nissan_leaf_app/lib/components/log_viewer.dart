@@ -18,6 +18,9 @@ class LogViewer extends StatelessWidget {
     _logs.clear();
   }
 
+  @visibleForTesting
+  static List<String> get logs => List.unmodifiable(_logs);
+
   const LogViewer({super.key});
 
   @override

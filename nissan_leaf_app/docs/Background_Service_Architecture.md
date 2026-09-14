@@ -356,6 +356,20 @@ a single line) only ever showed up on real drives with nobody watching:
   file instead; same debug signing config as release, so `adb install -r`
   over either variant preserves app data. Install it, pull the files, then
   reinstall the release apk to go back to normal.
+- **The in-app `LogViewer`** (dashboard's log panel) is live, not durable -
+  it only ever shows what the isolate that built it did, since `SimpleLogger`
+  is a singleton per isolate, not per app (see "Two Isolates" above). Before
+  this follow-up it silently only showed UI-isolate activity, making the
+  real background service's connect attempts, OBD command retries, and CAN
+  parse errors invisible whenever you watched it live. `backgroundServiceEntryPoint`
+  (`background_service_controller.dart`) now forwards every line the service
+  logs to the main isolate via `sendDataToMain({'type': 'log', ...})`, and
+  `main.dart` relays it into `LogViewer` via a permanent `addTaskDataCallback`
+  (`onBackgroundServiceData`) alongside the transient request/reply callbacks
+  `BackgroundServiceOrchestrator` registers - `flutter_foreground_task` calls
+  every registered callback per message, so both coexist. Still not durable:
+  closing the app or the dashboard not being open loses it, same as before -
+  for anything that needs to survive that, use the two log files above.
 
 ## Collection Loop
 

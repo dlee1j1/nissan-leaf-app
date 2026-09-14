@@ -1,6 +1,6 @@
 // lib/main.dart (updated version)
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, visibleForTesting;
 import 'package:nissan_leaf_app/components/mqtt_settings_widget.dart';
 import 'package:simple_logger/simple_logger.dart';
 import 'dart:async';
@@ -13,6 +13,17 @@ import 'background_service_controller.dart';
 
 // Global logger instance
 final _log = SimpleLogger();
+
+/// Handles messages from the background service isolate that are pure log
+/// forwarding (see backgroundServiceEntryPoint in background_service_controller.dart).
+/// Pulled out as a top-level function (not inlined into the callback
+/// registration) so it's testable without a running foreground task.
+@visibleForTesting
+void onBackgroundServiceData(Object data) {
+  if (data is Map && data['type'] == 'log') {
+    LogViewer.addLogFromService(data['message'].toString());
+  }
+}
 
 void main() {
   // This needs to be called before anything else
@@ -91,6 +102,9 @@ class _MainScreenState extends State<MainScreen> {
         await BackgroundServiceController.initialize();
         // Initialize the communication port for foreground task
         FlutterForegroundTask.initCommunicationPort();
+        // Surface the background service's own logs in the UI's LogViewer -
+        // otherwise LogViewer only ever shows what the UI isolate did.
+        FlutterForegroundTask.addTaskDataCallback(onBackgroundServiceData);
         // Start the service once here so flutter_foreground_task persists its
         // notification options and Dart callback handle. The native
         // ObdConnectionReceiver relies on that persisted config to relaunch the
