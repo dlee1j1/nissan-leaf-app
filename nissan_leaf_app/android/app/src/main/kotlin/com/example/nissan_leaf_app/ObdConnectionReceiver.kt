@@ -36,8 +36,9 @@ import java.time.LocalDateTime
  * requires the app to have called FlutterForegroundTask.startService() at least
  * once before (done in main.dart) so the notification options and the Dart
  * callback handle are already persisted. The constants below mirror the pinned
- * plugin (flutter_foreground_task 8.17.0); they are strings on purpose to avoid
- * a compile dependency on plugin internals.
+ * plugin (flutter_foreground_task 11.0.3 - bumped from 8.17.0 for #22, see its
+ * PreferencesKey.kt/ForegroundServiceAction.kt; unchanged across that bump);
+ * they are strings on purpose to avoid a compile dependency on plugin internals.
  */
 class ObdConnectionReceiver : BroadcastReceiver() {
 
@@ -59,6 +60,19 @@ class ObdConnectionReceiver : BroadcastReceiver() {
         // BluetoothDeviceManager when it connects to a dongle.
         private const val FLUTTER_PREFS = "FlutterSharedPreferences"
         private const val SAVED_DEVICE_ID_KEY = "flutter.obd_device_id"
+
+        // flutter_foreground_task's task-data prefs - holds the Dart callback
+        // handle createForegroundTask() needs to run any Dart code at all on a
+        // headless restart. See restoreCallbackHandleIfMissing() below - #22.
+        private const val FGS_TASK_OPTIONS_PREFS =
+            "com.pravera.flutter_foreground_task.prefs.FOREGROUND_TASK_OPTIONS"
+        private const val FGS_CALLBACK_HANDLE_KEY = "callbackHandle"
+
+        // Our own durable backup of that same handle - written by
+        // BackgroundServiceController.startService() (see its doc comment)
+        // every time the app is opened normally, to a key the plugin's own
+        // stopService() can never clear.
+        private const val CALLBACK_HANDLE_BACKUP_KEY = "flutter.ffg_task_callback_handle_backup"
 
         // Diagnostic instrumentation for issue #3 - the receiver ran when the app
         // manually worked, so the open question is whether/what this fires with
@@ -103,6 +117,7 @@ class ObdConnectionReceiver : BroadcastReceiver() {
         val startResult = when (decision) {
             ObdAction.START -> {
                 Log.i(TAG, "recognised device connected; starting foreground service")
+                restoreCallbackHandleIfMissing(context)
                 setServiceStatus(context, FGS_ACTION_REBOOT)
                 val result = startForegroundService(context)
                 notifyTriggered(context, name ?: address ?: "unknown device")
@@ -135,6 +150,49 @@ class ObdConnectionReceiver : BroadcastReceiver() {
     private fun savedDeviceId(context: Context): String? =
         context.getSharedPreferences(FLUTTER_PREFS, Context.MODE_PRIVATE)
             .getString(SAVED_DEVICE_ID_KEY, null)
+
+    /**
+     * Self-heals the one specific way a headless restart silently does
+     * nothing at all (issue #22): flutter_foreground_task's
+     * `ForegroundTask.init()` skips `executeDartCallback()` entirely - no
+     * exception, no log, nothing - when the persisted `callbackHandle` is
+     * missing. That happens whenever `BackgroundService`'s own routine
+     * "probably parked" self-stop (`FlutterForegroundTask.stopService()`,
+     * after `maxConsecutiveFailures`) runs: the plugin's `stop()` path
+     * clears its entire task-data prefs entry as a side effect, callback
+     * handle included, and nothing re-persists it until the app is next
+     * opened by hand.
+     *
+     * Confirmed directly (not inferred) via a breadcrumb-patched build of
+     * the plugin during the #22 investigation: with `callbackHandle`
+     * present, `createForegroundTask()` runs the Dart entrypoint every
+     * time; with it missing, the OS-level foreground service still
+     * promotes normally (that check runs unconditionally, before this one
+     * would ever matter) but the Dart isolate is never even asked to start
+     * - exactly the "zombie" symptom this issue is about.
+     *
+     * `BackgroundServiceController.startService()` computes and backs up
+     * the same handle (independently, via the same `PluginUtilities` call
+     * the plugin itself uses internally - deterministic for a given build)
+     * to [CALLBACK_HANDLE_BACKUP_KEY] every time the app is opened
+     * normally. This restores it from that backup, in place, only when the
+     * plugin's own copy is missing; a no-op whenever a real handle is
+     * already there (the common case).
+     */
+    private fun restoreCallbackHandleIfMissing(context: Context) {
+        val taskPrefs = context.getSharedPreferences(FGS_TASK_OPTIONS_PREFS, Context.MODE_PRIVATE)
+        if (taskPrefs.contains(FGS_CALLBACK_HANDLE_KEY)) return
+
+        val backupPrefs = context.getSharedPreferences(FLUTTER_PREFS, Context.MODE_PRIVATE)
+        if (!backupPrefs.contains(CALLBACK_HANDLE_BACKUP_KEY)) {
+            Log.w(TAG, "callbackHandle missing and no backup available - restart will likely be a no-op")
+            return
+        }
+
+        val handle = backupPrefs.getLong(CALLBACK_HANDLE_BACKUP_KEY, 0L)
+        taskPrefs.edit().putLong(FGS_CALLBACK_HANDLE_KEY, handle).commit()
+        Log.i(TAG, "restored missing callbackHandle from backup ($handle)")
+    }
 
     private fun hasBluetoothConnectPermission(context: Context): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return true

@@ -89,6 +89,12 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   // attempt, see #17). #20's first pass conflated the two, showing
   // "service alive" as if it meant "connected" - this is that follow-up.
   bool _dongleConnected = false;
+  // True when _serviceRunning is true but no Dart isolate backs it up -
+  // the exact #22 zombie signature (OS promoted the foreground service,
+  // but the Dart TaskHandler never attached). Meaningless when
+  // _serviceRunning is false. See BackgroundServiceController
+  // .isBackgroundIsolateAlive.
+  bool _serviceStalled = false;
 
   // MQTT state
   StreamSubscription? _mqttStatusSubscription;
@@ -146,27 +152,34 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       return;
     }
     final running = await BackgroundServiceController.isServiceRunning();
+    // Only meaningful (and only checked) when running is true - see #22.
+    // isBackgroundIsolateAlive is a synchronous, process-wide check, so
+    // this costs nothing extra even when it doesn't apply.
+    final stalled = running && !BackgroundServiceController.isBackgroundIsolateAlive;
     await _orchestrator.refreshStatus();
     if (mounted) {
       setState(() {
         _serviceRunning = running;
+        _serviceStalled = stalled;
         _dongleConnected = _orchestrator.isConnected;
       });
     }
   }
 
   IconData _statusIcon() {
-    if (!_serviceRunning) return Icons.bluetooth_disabled;
+    if (!_serviceRunning || _serviceStalled) return Icons.bluetooth_disabled;
     return _dongleConnected ? Icons.bluetooth_connected : Icons.bluetooth_searching;
   }
 
   Color _statusColor() {
+    if (_serviceStalled) return Colors.red; // #22: OS says running, Dart isn't there
     if (_dongleConnected) return Colors.green;
     if (_serviceRunning) return Colors.orange; // tracking, just not connected right now
     return _currentMode == AppMode.mock ? Colors.orange : Colors.red;
   }
 
   String _statusLabel() {
+    if (_serviceStalled) return 'Service Stalled';
     if (!_serviceRunning) return 'Service Not Running';
     return _dongleConnected ? 'Connected' : 'Looking for Dongle';
   }

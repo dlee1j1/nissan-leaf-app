@@ -310,4 +310,33 @@ void main() {
       expect(sentMessages, isEmpty);
     });
   });
+
+  group('Isolate liveness (#22)', () {
+    setUp(() {
+      // IsolateNameServer's registry is process-wide, not reset by the
+      // file-level tearDown's BackgroundService.resetForTesting() call
+      // running between *other* groups' tests only implicitly - be
+      // explicit here so these tests don't depend on group ordering.
+      BackgroundService.resetForTesting();
+    });
+
+    test('isIsolateAlive is false when nothing has marked it alive', () {
+      expect(BackgroundService.isIsolateAlive, false);
+    });
+
+    test('markIsolateAlive makes isIsolateAlive true', () {
+      BackgroundService.markIsolateAlive();
+      expect(BackgroundService.isIsolateAlive, true);
+    });
+
+    test('onDestroy unregisters it', () async {
+      BackgroundService.markIsolateAlive();
+      expect(BackgroundService.isIsolateAlive, true);
+
+      final service = BackgroundService(orchestrator: mockOrchestrator);
+      await service.onDestroy(DateTime.now(), false);
+
+      expect(BackgroundService.isIsolateAlive, false);
+    });
+  });
 }

@@ -1,11 +1,20 @@
 // background_service_controller.dart - replacing with foreground task
 import 'dart:async';
 import 'dart:io';
+import 'dart:ui' show PluginUtilities;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:simple_logger/simple_logger.dart';
 import 'background_service.dart';
+
+/// SharedPreferences key for the durable backup of the Dart callback handle
+/// - see the doc comment on [BackgroundServiceController.startService] for
+/// why this exists. Deliberately not the plugin's own key/prefs file: this
+/// must survive `FlutterForegroundTask.stopService()`, which clears the
+/// plugin's copy.
+const String callbackHandleBackupKey = 'ffg_task_callback_handle_backup';
 
 /// Wrapper class for FlutterForegroundTask static methods to make testing easier
 class ForegroundTaskWrapper {
@@ -80,6 +89,13 @@ class ForegroundTaskWrapper {
 /// Main entry point for the foreground task
 @pragma('vm:entry-point')
 void backgroundServiceEntryPoint() {
+  // First statement, deliberately before anything else - see issue #22 and
+  // the doc comment on BackgroundService.markIsolateAlive(). This is the
+  // earliest point any Dart code runs in the isolate at all, which is
+  // exactly what needs marking: in the #22 zombie case, not even this
+  // function's own first log line (a few statements below) ever ran.
+  BackgroundService.markIsolateAlive();
+
   // SimpleLogger is a singleton, but only within the isolate that
   // constructs it - this isolate's copy is distinct from the one main.dart
   // wires up for the UI's LogViewer (see #20 follow-up). Forward every log
@@ -198,7 +214,31 @@ class BackgroundServiceController {
     }
   }
 
-  /// Start the background service
+  /// Start the background service.
+  ///
+  /// Also backs up the Dart callback handle to our own SharedPreferences key
+  /// - see issue #22. `FlutterForegroundTask.startService()` computes a
+  /// numeric handle for [backgroundServiceEntryPoint]
+  /// (`PluginUtilities.getCallbackHandle`, tied to this specific compiled
+  /// binary) and persists it in the plugin's own prefs, which is how
+  /// `ObdConnectionReceiver`'s headless REBOOT later finds it with no live
+  /// Dart context to hand a function reference to directly. But
+  /// `FlutterForegroundTask.stopService()` - which `BackgroundService` calls
+  /// on itself as an intentional, routine "probably parked" self-stop after
+  /// `maxConsecutiveFailures` - clears that entire prefs entry as a side
+  /// effect, callback handle included. Nothing then re-persists it until the
+  /// app is next opened by hand, so a headless REBOOT in between (the next
+  /// drive) finds a null handle: native still promotes the OS-level
+  /// foreground service (nothing checks the handle before doing that) but
+  /// silently never asks the engine to run any Dart code at all - no
+  /// exception, no crash, no heartbeat, ever. Confirmed directly via a
+  /// breadcrumb-patched build of the plugin during the #22 investigation.
+  ///
+  /// The backup here is computed independently (same deterministic
+  /// function, same result) and written to a key of our own that
+  /// `stopService()` never touches, so `ObdConnectionReceiver` can restore
+  /// it if it ever finds the plugin's own copy missing at REBOOT time - see
+  /// `ObdConnectionReceiver.restoreCallbackHandleIfMissing`.
   static Future<bool> startService() async {
     if (_isSupported) {
       _log.info('Starting background service');
@@ -207,9 +247,25 @@ class BackgroundServiceController {
         notificationText: 'Monitoring battery status',
         callback: backgroundServiceEntryPoint,
       );
+      await _backupCallbackHandle();
       return true;
     } else {
       return false;
+    }
+  }
+
+  /// See the doc comment on [startService].
+  static Future<void> _backupCallbackHandle() async {
+    try {
+      final handle = PluginUtilities.getCallbackHandle(backgroundServiceEntryPoint);
+      if (handle == null) {
+        _log.warning('Could not compute callback handle to back up');
+        return;
+      }
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt(callbackHandleBackupKey, handle.toRawHandle());
+    } catch (e) {
+      _log.warning('Failed to back up callback handle: $e');
     }
   }
 
@@ -232,4 +288,14 @@ class BackgroundServiceController {
 
     return await _foregroundTask.isRunningService;
   }
+
+  /// Whether a background isolate is genuinely alive right now - see issue
+  /// #22. Complementary to [isServiceRunning]: that only reflects whether
+  /// Android promoted the OS-level foreground-service notification, which
+  /// (as #22 proved) can be `true` even when no Dart code ever ran.
+  /// `isServiceRunning() && !isBackgroundIsolateAlive` is the exact
+  /// signature of that bug, detectable instantly - no round trip, no
+  /// timeout, since IsolateNameServer's registry is native and answers
+  /// synchronously.
+  static bool get isBackgroundIsolateAlive => BackgroundService.isIsolateAlive;
 }

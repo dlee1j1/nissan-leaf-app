@@ -1,7 +1,8 @@
 // background_service.dart - the foreground-task handler
 import 'dart:async';
 import 'dart:io';
-import 'dart:isolate' show Isolate;
+import 'dart:isolate' show Isolate, ReceivePort;
+import 'dart:ui' show IsolateNameServer;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:meta/meta.dart';
@@ -40,6 +41,46 @@ class BackgroundService extends TaskHandler implements DataOrchestrator {
   /// Stop the service once this many collection cycles fail in a row. At the
   /// default 1-minute interval that is a ~5-minute shutdown after parking.
   static const int maxConsecutiveFailures = 5;
+
+  // Liveness marker for issue #22: flutter_foreground_task exposes nothing
+  // - Dart or native - that reflects whether its background isolate ever
+  // actually attached (isRunningService only reflects whether Android
+  // promoted the OS-level foreground-service notification, a strictly
+  // earlier and weaker checkpoint - that gap is the entire story of #22).
+  // IsolateNameServer's registry is native and process-wide, so it's
+  // queryable synchronously from any isolate in the same process,
+  // including the main UI isolate - no round trip, no timeout, unlike
+  // asking the real isolate to reply to a message.
+  static const String _isolateAlivePortName = 'nissan_leaf_background_isolate_alive';
+  static ReceivePort? _isolateAlivePort;
+
+  /// Marks that a background isolate has begun executing. Called as
+  /// literally the first statement of `backgroundServiceEntryPoint` (see
+  /// background_service_controller.dart), before anything else - including
+  /// before the entrypoint's own first log line - so it reflects "did the
+  /// isolate even start running any code at all" as precisely as possible.
+  /// That's the exact gap #22 exposed: not even that first log line ran in
+  /// the zombie case.
+  ///
+  /// Unconditionally clears any existing mapping first, matching the
+  /// pattern flutter_foreground_task itself uses for its own port in
+  /// `initCommunicationPort()` - a stale entry left behind by a previous
+  /// isolate that died without going through [onDestroy] must never cause
+  /// a false "alive" reading, so the current isolate's registration always
+  /// wins rather than silently failing to replace it.
+  static void markIsolateAlive() {
+    IsolateNameServer.removePortNameMapping(_isolateAlivePortName);
+    _isolateAlivePort = ReceivePort();
+    IsolateNameServer.registerPortWithName(_isolateAlivePort!.sendPort, _isolateAlivePortName);
+  }
+
+  /// Whether a background isolate is genuinely alive right now - queryable
+  /// from any isolate in this process (see [markIsolateAlive]). Answers a
+  /// different question than `FlutterForegroundTask.isRunningService`,
+  /// which only reflects OS-level foreground-service promotion and, per
+  /// #22, can be `true` for a fully zombied service.
+  static bool get isIsolateAlive =>
+      IsolateNameServer.lookupPortByName(_isolateAlivePortName) != null;
 
   Duration _baseInterval = const Duration(minutes: defaultFrequency);
   TriggerType _lastTrigger = TriggerType.timer;
@@ -98,6 +139,12 @@ class BackgroundService extends TaskHandler implements DataOrchestrator {
   static void resetForTesting() {
     _instance?._timer?.cancel();
     _instance = null;
+    // IsolateNameServer's registry is process-wide and outlives the Dart
+    // singleton above - tests share a process, so a markIsolateAlive() call
+    // in one test would otherwise leak into the next.
+    IsolateNameServer.removePortNameMapping(_isolateAlivePortName);
+    _isolateAlivePort?.close();
+    _isolateAlivePort = null;
   }
 
   BackgroundService._internal({DataOrchestrator? orchestrator})
@@ -416,9 +463,23 @@ class BackgroundService extends TaskHandler implements DataOrchestrator {
   }
 
   @override
-  Future<void> onDestroy(DateTime timestamp) async {
-    _log.info('Background service being destroyed');
-    await _appendHeartbeat('stop');
+  Future<void> onDestroy(DateTime timestamp, bool isTimeout) async {
+    _log.info('Background service being destroyed${isTimeout ? ' (timeout)' : ''}');
+    // isTimeout is new in flutter_foreground_task 9.0+: true when the OS tore
+    // the service down because it didn't stop in time (the
+    // ForegroundServiceDidNotStopInTime family of exceptions the 9.2.2
+    // changelog says it fixed - see issue #22). Worth keeping in the durable
+    // log since a real occurrence would be direct evidence for or against
+    // that fix actually holding.
+    await _appendHeartbeat(isTimeout ? 'stop (timeout)' : 'stop');
+    // Clean unregistration on the way out - see markIsolateAlive(). A crash
+    // or a kill that skips onDestroy entirely just leaves this stale until
+    // the next markIsolateAlive() call clears it (that call is
+    // unconditional for exactly this reason), so isIsolateAlive never
+    // depends on this running.
+    IsolateNameServer.removePortNameMapping(_isolateAlivePortName);
+    _isolateAlivePort?.close();
+    _isolateAlivePort = null;
     try {
       dispose();
     } catch (e, stackTrace) {
