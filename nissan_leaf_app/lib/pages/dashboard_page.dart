@@ -167,8 +167,8 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   }
 
   String _statusLabel() {
-    if (!_serviceRunning) return 'Not tracking';
-    return _dongleConnected ? 'Connected' : 'Reconnecting…';
+    if (!_serviceRunning) return 'Service Not Running';
+    return _dongleConnected ? 'Connected' : 'Looking for Dongle';
   }
 
   void _setupOrchestrator() {
