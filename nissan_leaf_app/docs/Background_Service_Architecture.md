@@ -117,26 +117,12 @@ theoretical, failure mode.
 
 **Zombie service (#22):** a worse variant of the gap above - the native
 receiver can get Android to promote the process to a foreground service
-(confirmed independently by `receiver_debug.log` and `ActivityManager`'s own
-log) while the Dart `TaskHandler` never attaches at all: no heartbeat, not
-even `onStart()`'s first line. `isServiceRunning()` then reports "alive" for
-a service nothing is listening on, so `refreshNow`/`refreshStatus` just burn
-their full timeout with no way to tell "isolate is slow" from "isolate never
-came up." Root cause traced to `flutter_foreground_task` 8.17.0's
-`ForegroundService.onStartCommand()`: the `REBOOT`/`RESTART` branch called
-`startForegroundService()` (the part `ActivityManager`'s log reflects) and
-then `createForegroundTask()` (spins up the actual `FlutterEngine` + Dart
-callback) with no try/catch around either - an exception between those two
-calls left the OS-level FGS promotion done and the Dart side never started,
-exactly this symptom. Bumped to 11.0.3, which wraps that whole dispatch in a
-try/catch that calls `stopForegroundService()` on any exception instead of
-leaving a zombie. Field-confirmation (a real drive reproducing the
-foreground-app trigger without recurrence) is still pending as of the
-upgrade - treat as a strong candidate fix, not a closed root cause, until
-that happens. `TaskHandler.onDestroy` gained an `isTimeout` param in this
-bump (recorded as `stop (timeout)` in `service_heartbeat.log`) - a
-`true` value would be direct evidence of the redundant-FGS-start-contract
-race the plugin's 9.2.2 changelog separately describes fixing.
+while the Dart `TaskHandler` never attaches at all, so `isServiceRunning()`
+reports "alive" for a service nothing is listening on and
+`refreshNow`/`refreshStatus` just burn their full timeout. Root cause is
+still open as of the `flutter_foreground_task` 11.0.3 bump below - that
+upgrade did not fix it. Full investigation history and evidence lives on
+the issue, not here.
 
 ## Four-Part Design
 
@@ -353,9 +339,10 @@ a single line) only ever showed up on real drives with nobody watching:
 
 - **`service_heartbeat.log`** (app documents dir) - one line per `start`,
   `cycle-start`, `cycle` (with `reason=<...>` on failure - see
-  `background_service.dart` above), and `stop`. `cycle-start` is written
-  before any `await` in `execute()`, specifically so a cycle that starts and
-  then hangs forever (nothing in the scan/connect/probe chain is
+  `background_service.dart` above), and `stop` (`stop (timeout)` if
+  `TaskHandler.onDestroy`'s `isTimeout` param was true). `cycle-start` is
+  written before any `await` in `execute()`, specifically so a cycle that
+  starts and then hangs forever (nothing in the scan/connect/probe chain is
   timeout-guarded) leaves a trace distinguishable from the isolate never
   having run at all - both used to look like the same silence.
 - **`receiver_debug.log`** (app files dir) - one line per `ACL_CONNECTED`
