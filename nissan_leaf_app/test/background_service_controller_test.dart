@@ -1,8 +1,10 @@
 // test/background_service_controller_test.dart
+import 'dart:ui' show PluginUtilities;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nissan_leaf_app/background_service_controller.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 // Mock the ForegroundTaskWrapper
 class MockForegroundTaskWrapper extends Mock implements ForegroundTaskWrapper {}
@@ -105,6 +107,31 @@ void main() {
             notificationText: any(named: 'notificationText'),
             callback: any(named: 'callback'),
           )).called(1);
+    });
+
+    // #22: FlutterForegroundTask.stopService() clears the plugin's own
+    // persisted callback handle as a side effect (BackgroundService's
+    // routine "probably parked" self-stop calls it), which silently zombies
+    // the next headless restart with no error anywhere - see the doc comment
+    // on BackgroundServiceController.startService. This is the other half of
+    // the fix: back up the handle to our own key every time the app opens
+    // normally, so ObdConnectionReceiver has something to restore from.
+    test('startService backs up the callback handle for #22', () async {
+      SharedPreferences.setMockInitialValues({});
+      when(() => mockForegroundTask.startService(
+            notificationTitle: any(named: 'notificationTitle'),
+            notificationText: any(named: 'notificationText'),
+            callback: any(named: 'callback'),
+          )).thenAnswer((_) async {});
+      BackgroundServiceController.setIsSupportedForTest(true);
+
+      await BackgroundServiceController.startService();
+
+      final expectedHandle =
+          PluginUtilities.getCallbackHandle(backgroundServiceEntryPoint)?.toRawHandle();
+      expect(expectedHandle, isNotNull);
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getInt(callbackHandleBackupKey), expectedHandle);
     });
 
     test('stopService calls ForegroundTaskWrapper.stopService', () async {

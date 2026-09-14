@@ -1,11 +1,20 @@
 // background_service_controller.dart - replacing with foreground task
 import 'dart:async';
 import 'dart:io';
+import 'dart:ui' show PluginUtilities;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:simple_logger/simple_logger.dart';
 import 'background_service.dart';
+
+/// SharedPreferences key for the durable backup of the Dart callback handle
+/// - see the doc comment on [BackgroundServiceController.startService] for
+/// why this exists. Deliberately not the plugin's own key/prefs file: this
+/// must survive `FlutterForegroundTask.stopService()`, which clears the
+/// plugin's copy.
+const String callbackHandleBackupKey = 'ffg_task_callback_handle_backup';
 
 /// Wrapper class for FlutterForegroundTask static methods to make testing easier
 class ForegroundTaskWrapper {
@@ -198,7 +207,31 @@ class BackgroundServiceController {
     }
   }
 
-  /// Start the background service
+  /// Start the background service.
+  ///
+  /// Also backs up the Dart callback handle to our own SharedPreferences key
+  /// - see issue #22. `FlutterForegroundTask.startService()` computes a
+  /// numeric handle for [backgroundServiceEntryPoint]
+  /// (`PluginUtilities.getCallbackHandle`, tied to this specific compiled
+  /// binary) and persists it in the plugin's own prefs, which is how
+  /// `ObdConnectionReceiver`'s headless REBOOT later finds it with no live
+  /// Dart context to hand a function reference to directly. But
+  /// `FlutterForegroundTask.stopService()` - which `BackgroundService` calls
+  /// on itself as an intentional, routine "probably parked" self-stop after
+  /// `maxConsecutiveFailures` - clears that entire prefs entry as a side
+  /// effect, callback handle included. Nothing then re-persists it until the
+  /// app is next opened by hand, so a headless REBOOT in between (the next
+  /// drive) finds a null handle: native still promotes the OS-level
+  /// foreground service (nothing checks the handle before doing that) but
+  /// silently never asks the engine to run any Dart code at all - no
+  /// exception, no crash, no heartbeat, ever. Confirmed directly via a
+  /// breadcrumb-patched build of the plugin during the #22 investigation.
+  ///
+  /// The backup here is computed independently (same deterministic
+  /// function, same result) and written to a key of our own that
+  /// `stopService()` never touches, so `ObdConnectionReceiver` can restore
+  /// it if it ever finds the plugin's own copy missing at REBOOT time - see
+  /// `ObdConnectionReceiver.restoreCallbackHandleIfMissing`.
   static Future<bool> startService() async {
     if (_isSupported) {
       _log.info('Starting background service');
@@ -207,9 +240,25 @@ class BackgroundServiceController {
         notificationText: 'Monitoring battery status',
         callback: backgroundServiceEntryPoint,
       );
+      await _backupCallbackHandle();
       return true;
     } else {
       return false;
+    }
+  }
+
+  /// See the doc comment on [startService].
+  static Future<void> _backupCallbackHandle() async {
+    try {
+      final handle = PluginUtilities.getCallbackHandle(backgroundServiceEntryPoint);
+      if (handle == null) {
+        _log.warning('Could not compute callback handle to back up');
+        return;
+      }
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt(callbackHandleBackupKey, handle.toRawHandle());
+    } catch (e) {
+      _log.warning('Failed to back up callback handle: $e');
     }
   }
 
