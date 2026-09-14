@@ -8,6 +8,7 @@ import 'package:simple_logger/simple_logger.dart';
 
 import '../components/log_viewer.dart';
 import '../components/obd_commands_panel.dart';
+import '../components/live_drive_check_widget.dart';
 
 class ConnectionPage extends StatefulWidget {
   const ConnectionPage({
@@ -154,10 +155,12 @@ class _ConnectionPageState extends State<ConnectionPage> {
           ),
 
           // Device list or command panel
-          if (_manager.isConnected)
+          if (_manager.isConnected) ...[
+            const LiveDriveCheckWidget(),
             Expanded(
               child: ObdCommandsPanel(),
-            )
+            ),
+          ]
           else
             Expanded(
               flex: 2,
