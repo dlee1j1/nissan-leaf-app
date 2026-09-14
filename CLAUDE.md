@@ -42,7 +42,11 @@ the container. From the host, `make <target>` starts the container and
 re-invokes itself inside it. So `make apk`, `make test`, `make analyze`
 all work directly from the Mac.
 
-You don't have rights to git push but go all the way to git commit as necessary in reasonable chunks.
+Commit locally as necessary, in reasonable chunks. Don't push, open a PR,
+or merge until Dennis has reviewed the changes and explicitly says to go
+ahead — he does the code review before anything reaches the repo. Once he
+signs off on a batch of changes, handle push/PR/merge for it yourself
+without asking again.
 
 Flutter, the Android SDK, and Gradle exist only inside the container.
 
