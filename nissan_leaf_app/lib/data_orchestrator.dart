@@ -128,6 +128,8 @@ class DirectOBDOrchestrator implements DataOrchestrator {
         'speed',
         'odometer',
         'ambient_temp',
+        'l1_l2_charges',
+        'quick_charges',
         'range_remaining_raw_length',
         'range_remaining_raw_bytes',
       ];

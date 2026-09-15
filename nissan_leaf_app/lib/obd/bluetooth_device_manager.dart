@@ -439,15 +439,22 @@ class BluetoothDeviceManager {
         return null;
       }
 
-      // TEMPORARY (data-pipeline plan, Phase A): speed/odometer/ambientTemp
-      // reads purely to verify their decode formulas against the real car -
-      // never persisted to Reading/the DB/MQTT (see DirectOBDOrchestrator).
+      // TEMPORARY (data-pipeline plan, Phase A): speed/odometer/ambientTemp/
+      // l1l2Charges/quickCharges reads purely to verify their decode
+      // formulas against the real car - never persisted to Reading/the
+      // DB/MQTT (see DirectOBDOrchestrator).
       // Best-effort and non-fatal: a failure here must never break the
       // primary lbc/range collection above. Remove once Phase A is done and
       // either these are wired in for real (Phase B) or the formulas are
       // found wanting.
       final verificationData = <String, dynamic>{};
-      for (final cmd in [OBDCommand.speed, OBDCommand.odometer, OBDCommand.ambientTemp]) {
+      for (final cmd in [
+        OBDCommand.speed,
+        OBDCommand.odometer,
+        OBDCommand.ambientTemp,
+        OBDCommand.l1l2Charges,
+        OBDCommand.quickCharges,
+      ]) {
         try {
           verificationData.addAll(await cmd.run());
         } catch (e) {

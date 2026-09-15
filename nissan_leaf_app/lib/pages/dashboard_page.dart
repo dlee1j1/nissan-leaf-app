@@ -404,6 +404,8 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     final speed = data['speed'];
     final odometer = data['odometer'];
     final ambientTemp = data['ambient_temp'];
+    final l1l2Charges = data['l1_l2_charges'];
+    final quickCharges = data['quick_charges'];
     final rangeRawLength = data['range_remaining_raw_length'];
     final rangeRawBytes = data['range_remaining_raw_bytes'];
     return Card(
@@ -421,6 +423,9 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
             Text('Speed: ${speed ?? '--'} km/h  '
                 'Odometer: ${odometer ?? '--'} km  '
                 'Ambient: ${ambientTemp ?? '--'}°C'),
+            const SizedBox(height: 4),
+            Text('L1/L2 charges: ${l1l2Charges ?? '--'}  '
+                'Quick charges: ${quickCharges ?? '--'}'),
             if (rangeRawLength != null) ...[
               const SizedBox(height: 4),
               Text('Range response: $rangeRawLength bytes -> $rangeRawBytes'),
