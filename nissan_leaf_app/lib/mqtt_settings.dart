@@ -75,7 +75,11 @@ class MqttSettings {
   /// Returns an empty string if no password is set
   Future<String> getPassword() async {
     try {
-      return await _secureStorage.getString(_passwordKey);
+      final password = await _secureStorage.getString(_passwordKey);
+      // TEMPORARY diagnostic - length only, never the password itself.
+      // Investigating a report that the saved password "gets forgotten".
+      _log.info('getPassword: retrieved ${password.length} characters');
+      return password;
     } catch (e) {
       _log.warning('Error reading password from secure storage: $e');
       return '';
@@ -86,6 +90,8 @@ class MqttSettings {
   Future<void> setPassword(String password) async {
     try {
       await _secureStorage.setString(_passwordKey, password);
+      // TEMPORARY diagnostic - see getPassword().
+      _log.info('setPassword: stored ${password.length} characters');
     } catch (e) {
       _log.severe('Error writing password to secure storage: $e');
       rethrow;
