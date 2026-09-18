@@ -56,6 +56,17 @@ class MqttClient {
   bool get isConnected => _connectionStatus == MqttConnectionStatus.connected;
   MqttSettings? get settings => _settings;
 
+  /// Attach settings without side effects (no auto-connect, no mock-mode
+  /// short-circuit) - for a "Test Connection" button that's about to call
+  /// [connect] itself right after and wants to test the just-typed values
+  /// regardless of the enabled toggle. [initialize] can't be reused here:
+  /// it skips connecting entirely when `settings.enabled` is false, which
+  /// is exactly the state while the user is still deciding whether to
+  /// enable it.
+  void attachSettings(MqttSettings settings) {
+    _settings = settings;
+  }
+
   /// Initialize the MQTT client with settings
   Future<void> initialize(MqttSettings settings) async {
     _settings = settings;

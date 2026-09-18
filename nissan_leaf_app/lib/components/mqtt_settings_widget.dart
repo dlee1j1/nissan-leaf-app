@@ -169,7 +169,13 @@ class _MqttSettingsWidgetState extends State<MqttSettingsWidget> {
       await _mqttSettings.setPassword(password);
     }
 
-    // Test connection
+    // Test connection - attach the just-edited settings first. Without
+    // this, connect() uses whatever MqttClient.instance._settings was left
+    // at (null on a fresh app launch before anything else has called
+    // initialize(), or stale values from an earlier session/save), not
+    // what's actually in the form right now. See the "Cannot connect:
+    // Invalid or missing MQTT settings" bug this was causing.
+    _mqttClient.attachSettings(_mqttSettings);
     final connected = await _mqttClient.connect();
 
     setState(() {
