@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../mqtt_client.dart';
@@ -31,6 +32,11 @@ class _MqttSettingsWidgetState extends State<MqttSettingsWidget> {
   final _mqttClient = MqttClient.instance;
   final _mqttSettings = MqttSettings();
 
+  // MqttClient.instance is a singleton that outlives this widget - without
+  // cancelling this in dispose(), its connectionStatus stream keeps firing
+  // setState on an unmounted State after the page closes.
+  StreamSubscription<MqttConnectionStatus>? _connectionStatusSubscription;
+
   @override
   void initState() {
     super.initState();
@@ -43,7 +49,8 @@ class _MqttSettingsWidgetState extends State<MqttSettingsWidget> {
     _connectionStatus = mqttClient.isConnected ? 'Connected' : 'Disconnected';
     _isConnected = mqttClient.isConnected;
 
-    _mqttClient.connectionStatus.listen((status) {
+    _connectionStatusSubscription = _mqttClient.connectionStatus.listen((status) {
+      if (!mounted) return;
       setState(() {
         switch (status) {
           case MqttConnectionStatus.disconnected:
@@ -434,6 +441,7 @@ class _MqttSettingsWidgetState extends State<MqttSettingsWidget> {
 
   @override
   void dispose() {
+    _connectionStatusSubscription?.cancel();
     _brokerController.dispose();
     _portController.dispose();
     _usernameController.dispose();

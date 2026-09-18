@@ -113,6 +113,11 @@ class MqttClient {
       final server =
           _settings!.useWebSocket ? 'wss://${_settings!.broker}' : _settings!.broker;
       _client = MqttServerClient(server, _settings!.clientId);
+      // TEMPORARY diagnostic: prints CONNECT/CONNACK/ping-level detail via
+      // print() (visible in `adb logcat`, tagged "flutter") - investigating
+      // a rapid connect/auto-reconnect loop that only shows up over
+      // WebSocket. Remove once diagnosed.
+      _client!.logging(on: true);
       _client!.useWebSocket = _settings!.useWebSocket;
       if (_settings!.useWebSocket) {
         // Default is ['mqtt', 'mqttv3.1', 'mqttv3.11'] - some brokers/
