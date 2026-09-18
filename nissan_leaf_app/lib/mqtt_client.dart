@@ -144,8 +144,14 @@ class MqttClient {
         _client!.secure = true;
       }
 
-      // Set connection message
+      // Set connection message. Explicitly MQTT 3.1.1 ("MQTT"/4) - the
+      // package defaults to the old 3.1 handshake ("MQIsdp"/3), which
+      // Dennis's broker (behind Cloudflare) accepted the CONNECT for but
+      // then closed within ~60ms with no CONNACK, triggering an immediate
+      // autoReconnect loop. Confirmed via MqttClient.logging(on: true).
       final connMessage = MqttConnectMessage()
+          .withProtocolName(MqttClientConstants.mqttV311ProtocolName)
+          .withProtocolVersion(MqttClientConstants.mqttV311ProtocolVersion)
           .withClientIdentifier(_settings!.clientId)
           .withWillTopic(_settings!.getAvailabilityTopic())
           .withWillMessage('offline')
