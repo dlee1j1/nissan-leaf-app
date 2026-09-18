@@ -752,6 +752,14 @@ class _RangeRemainingCommand extends OBDCommand {
       // diagnosed.
       'range_remaining_raw_length': data.length,
       'range_remaining_raw_bytes': data.toString(),
+      // UNCONFIRMED candidate from one manual sample: bytes 5-6 (0x42 0x08 =
+      // 16904 in the captured sample) / 100, read directly as miles rather
+      // than km - came out ~169.0mi against a dash reading of ~172mi
+      // (~1.7% off, closer than any other byte-pair/scale combo tried).
+      // Needs a second sample at a meaningfully different range to confirm
+      // this actually scales, not just eyeball against one dash glance.
+      // Remove once confirmed or ruled out.
+      if (data.length > 6) 'range_remaining_candidate_miles': extractInt(data, 5, 7) / 100,
     };
   }
 }

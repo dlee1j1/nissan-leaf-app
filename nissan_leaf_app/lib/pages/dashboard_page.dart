@@ -408,6 +408,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     final quickCharges = data['quick_charges'];
     final rangeRawLength = data['range_remaining_raw_length'];
     final rangeRawBytes = data['range_remaining_raw_bytes'];
+    final rangeCandidateMiles = data['range_remaining_candidate_miles'];
     return Card(
       color: Colors.amber[50],
       child: Padding(
@@ -429,6 +430,10 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
             if (rangeRawLength != null) ...[
               const SizedBox(height: 4),
               Text('Range response: $rangeRawLength bytes -> $rangeRawBytes'),
+            ],
+            if (rangeCandidateMiles != null) ...[
+              const SizedBox(height: 4),
+              Text('Range candidate (unconfirmed): $rangeCandidateMiles mi - compare to dash'),
             ],
           ],
         ),

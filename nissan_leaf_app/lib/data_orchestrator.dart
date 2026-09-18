@@ -132,6 +132,7 @@ class DirectOBDOrchestrator implements DataOrchestrator {
         'quick_charges',
         'range_remaining_raw_length',
         'range_remaining_raw_bytes',
+        'range_remaining_candidate_miles',
       ];
       final verification = {
         for (final k in verificationKeys)
