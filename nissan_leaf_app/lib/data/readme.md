@@ -114,17 +114,14 @@ The five analytics columns were added in schema version 2 via `onUpgrade`
 in `readings_db.dart` - see "Extending the Data Model" below for the
 pattern, now exercised for real rather than just described.
 
-### Known-unreliable field: `estimatedRange`
+### `estimatedRange` is not populated
 
-`range_remaining` (OBD PID `03220e24`, header `743`) decodes exactly per
-the byte-level reference used to validate the rest of this data (see
-`obd_command.dart`'s `_RangeRemainingCommand`), but real captures show its
-response is frozen byte-for-byte across sessions with meaningfully
-different SOC, even mid-drive. Not a wrong-offset bug - more likely this
-PID isn't actually a live "current remaining range" signal despite how the
-reference doc labels it. Left as-is (not fixed, not worked around) until
-that gets a real answer; the dash's own range display is the reliable
-source until then.
+The OBD command that fed it (`03220e24`, header `743`) returned a frozen
+value regardless of actual SOC or driving, so it was removed rather than
+left half-working - see the "REMOVED" note by `extractInt` in
+`obd_command.dart`. The field and DB column still exist (nothing currently
+writes them); the dashboard's display of the car's own dash range is
+unaffected.
 
 ## Session Management
 

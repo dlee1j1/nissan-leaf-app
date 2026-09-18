@@ -76,11 +76,9 @@ abstract class OBDCommand {
   static final OBDCommand tpFl = _TpFlCommand();
   static final OBDCommand tpRr = _TpRrCommand();
   static final OBDCommand tpRl = _TpRlCommand();
-  static final OBDCommand rangeRemaining = _RangeRemainingCommand();
 
   static final _registry = [
     lbc,
-    rangeRemaining,
     odometer,
     l1l2Charges,
     quickCharges,
@@ -734,34 +732,22 @@ class _TpRlCommand extends OBDCommand {
   }
 }
 
-class _RangeRemainingCommand extends OBDCommand {
-  _RangeRemainingCommand()
-      : super(
-          name: 'range_remaining',
-          description: 'Remaining range (km)',
-          command: '03220e24',
-          header: '743',
-        );
-
-  @override
-  Map<String, dynamic> decode(List<int> data) {
-    // KNOWN BROKEN (data-pipeline plan, Phase A): this reads a frozen value
-    // regardless of actual SOC/driving - confirmed via real captures where
-    // the raw response bytes stayed byte-for-byte identical across sessions
-    // with meaningfully different SOC, and even mid-drive. Not simply a
-    // wrong byte offset (extractInt(data,3,5) matches the documented
-    // formula exactly); more likely PID 0E24 isn't actually a live
-    // "current remaining range" signal at all, despite how the reference
-    // doc labels it - that entry was already the one with a mismatched
-    // query/response PID in the doc, i.e. already the least trustworthy
-    // entry there. Parked rather than fixed - the dash's own range display
-    // is ground truth until this gets a real answer (e.g. cross-checked
-    // against LeafSpy).
-    return {
-      'range_remaining': extractInt(data, 3, 5) / 10,
-    };
-  }
-}
+// REMOVED (data-pipeline plan): there used to be a `rangeRemaining`
+// command here - PID 0322 0e24, header 743, decode `extractInt(data,3,5)
+// / 10`. Deleted rather than left disabled because it doesn't just need a
+// formula fix: real captures showed the raw response bytes staying
+// byte-for-byte identical across sessions with meaningfully different
+// SOC, and even mid-drive - a frozen value, not a decode bug (the formula
+// matches the documented reference exactly). Most likely PID 0E24 isn't
+// actually a live "current remaining range" signal at all, despite how
+// that reference doc labels it - that entry was already the one with a
+// mismatched query/response PID in the doc, i.e. already its least
+// trustworthy entry. If reviving this, get real cross-referenced ground
+// truth first (e.g. via LeafSpy) rather than trusting the doc formula
+// alone - it looking right is exactly what made this take so long to
+// diagnose the first time. `Reading.estimatedRange` and the DB column
+// still exist (nothing currently populates them for real readings); the
+// dashboard's own display of the car's dash range is unaffected.
 
 // Utility functions
 int extractInt(List<int> bytes, int start, int end) {

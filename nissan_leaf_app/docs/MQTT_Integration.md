@@ -56,36 +56,32 @@ await settings.saveSettings();
 
 ### `mqtt_client.dart`
 
-Handles the actual MQTT communication:
-
-- Connection management
-- Reconnection logic
-- Message publishing
-- Home Assistant discovery
-- Availability updates
+One-shot: every call connects, does its work, and disconnects - always,
+even on failure. There is no persistent session, keep-alive timer, or
+auto-reconnect; each collection cycle (~once a minute while tracking)
+publishes fresh with whatever settings are current, so a settings change
+takes effect on the very next cycle with nothing to restart.
 
 Example:
 ```dart
-// Initialize with settings
 final client = MqttClient.instance;
-await client.initialize(settings);
 
-// Connect
-final connected = await client.connect();
+// Test settings without publishing anything
+final ok = await client.testConnection(settings);
 
-// Publish data
+// Publish one battery-data cycle
 await client.publishBatteryData(
+  settings: settings,
   stateOfCharge: 85.0,
   batteryHealth: 92.0,
   batteryVoltage: 364.5,
   batteryCapacity: 56.0,
-  estimatedRange: 150.0,
   sessionId: 'session_123',
 );
-
-// Disconnect
-await client.disconnect();
 ```
+
+Connects as MQTT 3.1.1 explicitly (some brokers reject the package's
+default 3.1 handshake).
 
 ## Home Assistant Integration
 
@@ -104,7 +100,6 @@ homeassistant/sensor/[clientId]/soc/config
 homeassistant/sensor/[clientId]/health/config
 homeassistant/sensor/[clientId]/voltage/config
 homeassistant/sensor/[clientId]/capacity/config
-homeassistant/sensor/[clientId]/range/config
 homeassistant/sensor/[clientId]/speed/config
 homeassistant/sensor/[clientId]/odometer/config
 homeassistant/sensor/[clientId]/ambient_temp/config
@@ -128,7 +123,7 @@ Example discovery message:
   "state_class": "measurement",
   "unit_of_measurement": "%",
   "state_topic": "nissan_leaf/nissan_leaf_tracker/soc/state",
-  "availability_topic": "nissan_leaf/nissan_leaf_tracker/availability",
+  "expire_after": 180,
   "icon": "mdi:car-electric",
   "unique_id": "nissan_leaf_tracker_soc",
   "device": {
@@ -151,31 +146,26 @@ The MQTT client publishes to several topics:
    [topicPrefix]/[clientId]/health/state           // Battery health
    [topicPrefix]/[clientId]/voltage/state          // Battery voltage
    [topicPrefix]/[clientId]/capacity/state         // Battery capacity
-   [topicPrefix]/[clientId]/range/state            // Estimated range (unreliable - see note below)
    [topicPrefix]/[clientId]/speed/state            // Vehicle speed, km/h
    [topicPrefix]/[clientId]/odometer/state         // Total odometer, km
    [topicPrefix]/[clientId]/ambient_temp/state     // Ambient temperature, °C
    [topicPrefix]/[clientId]/l1l2_charges/state     // Lifetime L1/L2 charge count
    [topicPrefix]/[clientId]/quick_charges/state    // Lifetime DC quick-charge count
    ```
-   The last seven topics only publish when that cycle's OBD read succeeded -
+   The last six topics only publish when that cycle's OBD read succeeded -
    the reads behind them are best-effort, unlike SOC/health/voltage/capacity.
+   There is no range/state topic - the OBD command behind it was removed
+   (see `nissan_leaf_app/lib/data/readme.md`).
 
-   `range/state` is a known-unreliable field: its raw OBD response decodes
-   correctly by the same byte-level reference validated for the others, but
-   real captures show it frozen regardless of actual SOC or driving. Treat
-   it as unfixed rather than trustworthy until that gets root-caused - see
-   `nissan_leaf_app/lib/data/readme.md`.
-
-2. **Availability Topic**: Device online status
-   ```
-   [topicPrefix]/[clientId]/availability           // "online" or "offline"
-   ```
-
-3. **Data Topic**: Complete data object
+2. **Data Topic**: Complete data object
    ```
    [topicPrefix]/[clientId]/data                   // JSON with all values
    ```
+
+There is no availability topic. Each sensor's discovery config sets
+`expire_after` instead (Home Assistant marks it unavailable if it hasn't
+heard an update within that window) - the right primitive for something
+that reports occasionally rather than staying connected.
 
 ## Quality of Service (QoS) Levels
 
@@ -189,12 +179,9 @@ The QoS level can be set in the MqttSettings configuration.
 
 ## Networking and Connectivity
 
-The client includes:
-
-- Connection status monitoring
-- Automatic reconnection
-- Network connectivity checks
-- Keep-alive mechanism (5-minute refresh)
+One-shot per call (see `mqtt_client.dart` above) - no persistent session,
+so no reconnection or keep-alive logic exists or is needed. A network
+connectivity check runs before every connect attempt.
 
 ### WebSocket transport
 
@@ -203,8 +190,11 @@ reachable behind a reverse proxy that terminates TLS and speaks HTTP(S) -
 e.g. Cloudflare's standard proxy, which forwards WebSocket upgrades but
 not raw TCP MQTT on 1883/8883 - enable **Use WebSocket (wss://)** in MQTT
 Settings. This connects via `wss://<broker>` on the configured port
-(typically 443) instead. `MqttSettings.useWebSocket` / `mqtt_use_websocket`
-is the underlying flag (`mqtt_settings.dart`, `mqtt_client.dart`).
+(typically 443) instead, sending a single `mqtt` value for
+`Sec-WebSocket-Protocol` (some brokers reject the package's default of
+three candidate values). `MqttSettings.useWebSocket` /
+`mqtt_use_websocket` is the underlying flag (`mqtt_settings.dart`,
+`mqtt_client.dart`).
 
 ## Security
 

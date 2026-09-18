@@ -45,9 +45,12 @@ class _MqttSettingsWidgetState extends State<MqttSettingsWidget> {
   }
 
   void _setupConnectionListener() {
-    final mqttClient = MqttClient.instance;
-    _connectionStatus = mqttClient.isConnected ? 'Connected' : 'Disconnected';
-    _isConnected = mqttClient.isConnected;
+    // Reflects the outcome of the last connect/publish attempt (this
+    // screen's own Test Connection, or a real background cycle) - not a
+    // live socket. See MqttConnectionStatus's doc: there's no persistent
+    // session any more to report on.
+    _connectionStatus = _mqttClient.isConnected ? 'Connected' : 'Disconnected';
+    _isConnected = _mqttClient.isConnected;
 
     _connectionStatusSubscription = _mqttClient.connectionStatus.listen((status) {
       if (!mounted) return;
@@ -88,14 +91,6 @@ class _MqttSettingsWidgetState extends State<MqttSettingsWidget> {
       _isEnabled = _mqttSettings.enabled;
       _useWebSocket = _mqttSettings.useWebSocket;
     });
-
-    // Get initial connection status
-    if (_mqttClient.settings != null) {
-      setState(() {
-        _isConnected = _mqttClient.isConnected;
-        _connectionStatus = _mqttClient.isConnected ? 'Connected' : 'Disconnected';
-      });
-    }
   }
 
   Future<void> _saveSettings() async {
@@ -129,11 +124,12 @@ class _MqttSettingsWidgetState extends State<MqttSettingsWidget> {
     // Save settings
     await _mqttSettings.saveSettings();
 
-    // Initialize MQTT client with new settings
-    if (_isEnabled && _mqttSettings.isValid()) {
-      await _mqttClient.initialize(_mqttSettings);
-    } else if (!_isEnabled && _mqttClient.isConnected) {
-      await _mqttClient.disconnect();
+    // Nothing to eagerly connect - there's no persistent session for
+    // saving to prime any more. The next real collection cycle (or another
+    // Test Connection) picks up these settings fresh on its own. Just stop
+    // claiming a stale "connected" if the feature just got turned off.
+    if (!_isEnabled) {
+      _mqttClient.reset();
     }
 
     // Show confirmation
@@ -169,14 +165,10 @@ class _MqttSettingsWidgetState extends State<MqttSettingsWidget> {
       await _mqttSettings.setPassword(password);
     }
 
-    // Test connection - attach the just-edited settings first. Without
-    // this, connect() uses whatever MqttClient.instance._settings was left
-    // at (null on a fresh app launch before anything else has called
-    // initialize(), or stale values from an earlier session/save), not
-    // what's actually in the form right now. See the "Cannot connect:
-    // Invalid or missing MQTT settings" bug this was causing.
-    _mqttClient.attachSettings(_mqttSettings);
-    final connected = await _mqttClient.connect();
+    // Test with exactly what's in the form right now - testConnection()
+    // takes settings as a parameter rather than reading a cached field, so
+    // there's no way for this to end up testing something stale.
+    final connected = await _mqttClient.testConnection(_mqttSettings);
 
     setState(() {
       _isTesting = false;

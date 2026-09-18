@@ -53,14 +53,6 @@ class DirectOBDOrchestrator implements DataOrchestrator {
   Future<void> _initialize() async {
     if (_initialized) return;
     await _obdConnector.initialize();
-
-    final mqttSettings = MqttSettings();
-    await mqttSettings.loadSettings();
-    if (mqttSettings.enabled && mqttSettings.isValid()) {
-      await _mqttClient.initialize(mqttSettings);
-      _log.info('MQTT client initialized');
-    }
-
     _initialized = true;
   }
 
@@ -117,15 +109,19 @@ class DirectOBDOrchestrator implements DataOrchestrator {
       final sessionId = await _getOrCreateSessionId();
 
       try {
-        // Publish to MQTT if connected
-        if (_mqttClient.isConnected) {
+        // Load settings fresh every cycle - one-shot connect/publish/
+        // disconnect (see MqttClient's class doc), so there's no cached
+        // client to go stale if settings changed since the last cycle.
+        final mqttSettings = MqttSettings();
+        await mqttSettings.loadSettings();
+        if (mqttSettings.enabled && mqttSettings.isValid()) {
           _log.info('Publishing to MQTT');
           await _mqttClient.publishBatteryData(
+            settings: mqttSettings,
             stateOfCharge: reading.stateOfCharge,
             batteryHealth: reading.batteryHealth,
             batteryVoltage: reading.batteryVoltage,
             batteryCapacity: reading.batteryCapacity,
-            estimatedRange: reading.estimatedRange,
             sessionId: sessionId,
             speed: reading.speed,
             odometer: reading.odometer,

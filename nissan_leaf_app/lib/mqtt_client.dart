@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'package:meta/meta.dart';
 import 'package:mqtt_client/mqtt_client.dart';
 import 'package:mqtt_client/mqtt_server_client.dart';
 import 'package:simple_logger/simple_logger.dart';
@@ -8,7 +7,12 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'mqtt_settings.dart';
 import 'app_state.dart';
 
-/// Connection status for the MQTT client
+/// Connection status, reported to the UI. With the one-shot model below,
+/// this reflects the outcome of the *last* attempt, not a live socket -
+/// [connected] is sticky and stays reported until the next attempt either
+/// confirms it again or reports [error]. There is deliberately no ongoing
+/// "disconnected because the socket closed" event for a successful publish
+/// closing its own connection afterward; that's expected, not a failure.
 enum MqttConnectionStatus {
   disconnected,
   connecting,
@@ -16,281 +20,105 @@ enum MqttConnectionStatus {
   error,
 }
 
-/// MQTT Client for Nissan Leaf Battery Tracker
+/// MQTT client for the Nissan Leaf Battery Tracker.
 ///
-/// Handles connection to MQTT broker and publishing of battery data
-/// with Home Assistant auto-discovery support
+/// One-shot per call: connect, do the work, disconnect - always, even on
+/// failure. There is no persistent session, no keep-alive timer, and no
+/// auto-reconnect. This matches how the app actually uses MQTT (a publish
+/// once per collection cycle, roughly once a minute while tracking, not a
+/// continuous stream) and sidesteps an entire class of bugs a persistent
+/// connection needs to handle - reconnect loops, stale cached settings
+/// surviving a config change, "is it actually still connected" ambiguity.
+/// See the data-pipeline plan's connectivity-model discussion for the
+/// reasoning.
+///
+/// Every method takes [MqttSettings] as a parameter rather than reading a
+/// cached field, so every call is guaranteed to use whatever the caller
+/// currently has in hand - the exact bug class ("Test Connection" using
+/// stale settings from a previous session) this replaces relied on an
+/// implicit shared `_settings` field to avoid.
 class MqttClient {
-  // Static instance for singleton pattern
   static final MqttClient _instance = MqttClient._internal();
   static MqttClient get instance => _instance;
   Connectivity _connectivity = Connectivity();
 
-  // Private constructor for singleton
   MqttClient._internal();
 
-  @visibleForTesting
   void setConnectivityForTest(Connectivity c) {
     _connectivity = c;
   }
 
-  // MQTT client instance
-  MqttServerClient? _client;
-
-  // Settings
-  MqttSettings? _settings;
-
-  // Connection status
   MqttConnectionStatus _connectionStatus = MqttConnectionStatus.disconnected;
   final _connectionStatusController = StreamController<MqttConnectionStatus>.broadcast();
 
-  // Connection monitoring
-  Timer? _keepAliveTimer;
-
-  // Logger
   final _log = SimpleLogger();
 
-  // Getters
   Stream<MqttConnectionStatus> get connectionStatus => _connectionStatusController.stream;
   MqttConnectionStatus get currentStatus => _connectionStatus;
   bool get isConnected => _connectionStatus == MqttConnectionStatus.connected;
-  MqttSettings? get settings => _settings;
 
-  /// Attach settings without side effects (no auto-connect, no mock-mode
-  /// short-circuit) - for a "Test Connection" button that's about to call
-  /// [connect] itself right after and wants to test the just-typed values
-  /// regardless of the enabled toggle. [initialize] can't be reused here:
-  /// it skips connecting entirely when `settings.enabled` is false, which
-  /// is exactly the state while the user is still deciding whether to
-  /// enable it.
-  void attachSettings(MqttSettings settings) {
-    _settings = settings;
-  }
-
-  /// Initialize the MQTT client with settings
-  Future<void> initialize(MqttSettings settings) async {
-    _settings = settings;
-
-    // If in mock mode, don't try to actually connect
-    if (AppState.instance.mockMode) {
-      _log.info('MQTT client initialized in mock mode - no actual connection will be attempted');
-      return;
-    }
-
-    // If MQTT is enabled, try to connect
-    if (settings.enabled && settings.isValid()) {
-      connect();
-    }
-  }
-
-  /// Connect to the MQTT broker
-  Future<bool> connect() async {
-    // Check if app is in mock mode
-    if (AppState.instance.mockMode) {
-      _log.info('MOCK MQTT CONNECT - Simulating successful connection to broker');
-      _updateStatus(MqttConnectionStatus.connected);
-      return true; // Simulate successful connection
-    }
-
-    if (_settings == null || !_settings!.isValid()) {
-      _log.warning('Cannot connect: Invalid or missing MQTT settings');
-      _updateStatus(MqttConnectionStatus.error);
-      return false;
-    }
-
-    // Check if already connected
-    if (_client != null && _client!.connectionStatus?.state == MqttConnectionState.connected) {
-      _log.info('Already connected to MQTT broker');
-      return true;
-    }
-
-    // Check network connectivity
-    final connectivityResults = await _connectivity.checkConnectivity();
-    if (!connectivityResults.any((result) => result != ConnectivityResult.none)) {
-      _log.warning('Cannot connect: No network connectivity');
-      _updateStatus(MqttConnectionStatus.error);
-      return false;
-    }
-
-    _updateStatus(MqttConnectionStatus.connecting);
-
-    try {
-      // Create MQTT client. useWebSocket needs a full "wss://host" URI, not
-      // a bare hostname (see MqttServerWsConnection.connect in the
-      // mqtt_client package) - raw TCP mode wants just the hostname.
-      // Needed for brokers only reachable via WebSocket, e.g. behind a
-      // reverse proxy like Cloudflare's standard proxy, which forwards
-      // WebSocket upgrades but not raw TCP MQTT on 1883/8883.
-      final server =
-          _settings!.useWebSocket ? 'wss://${_settings!.broker}' : _settings!.broker;
-      _client = MqttServerClient(server, _settings!.clientId);
-      // TEMPORARY diagnostic: prints CONNECT/CONNACK/ping-level detail via
-      // print() (visible in `adb logcat`, tagged "flutter") - investigating
-      // a rapid connect/auto-reconnect loop that only shows up over
-      // WebSocket. Remove once diagnosed.
-      _client!.logging(on: true);
-      _client!.useWebSocket = _settings!.useWebSocket;
-      if (_settings!.useWebSocket) {
-        // Default is ['mqtt', 'mqttv3.1', 'mqttv3.11'] - some brokers/
-        // reverse proxies expect exactly one Sec-WebSocket-Protocol value
-        // and error on more (a 502 from Cloudflare in this app's case).
-        // Match the single value a plain `new WebSocket(url, 'mqtt')` test
-        // sends, since that's confirmed to work against this broker.
-        _client!.websocketProtocols = MqttClientConstants.protocolsSingleDefault;
-      }
-
-      // Set up client options
-      _client!.port = _settings!.port;
-      _client!.keepAlivePeriod = 20; // seconds
-      _client!.autoReconnect = true;
-      _client!.onDisconnected = _onDisconnected;
-      _client!.onConnected = _onConnected;
-      _client!.onAutoReconnect = _onAutoReconnect;
-      _client!.onSubscribed = _onSubscribed;
-
-      // Set secure connection if using port 8883. Irrelevant in WebSocket
-      // mode - the package ignores `secure` there and takes TLS-or-not
-      // purely from the wss:// scheme above.
-      if (!_settings!.useWebSocket && _settings!.port == 8883) {
-        _client!.secure = true;
-      }
-
-      // Set connection message. Explicitly MQTT 3.1.1 ("MQTT"/4) - the
-      // package defaults to the old 3.1 handshake ("MQIsdp"/3), which
-      // Dennis's broker (behind Cloudflare) accepted the CONNECT for but
-      // then closed within ~60ms with no CONNACK, triggering an immediate
-      // autoReconnect loop. Confirmed via MqttClient.logging(on: true).
-      final connMessage = MqttConnectMessage()
-          .withProtocolName(MqttClientConstants.mqttV311ProtocolName)
-          .withProtocolVersion(MqttClientConstants.mqttV311ProtocolVersion)
-          .withClientIdentifier(_settings!.clientId)
-          .withWillTopic(_settings!.getAvailabilityTopic())
-          .withWillMessage('offline')
-          .withWillQos(MqttQos.atLeastOnce)
-          .withWillRetain()
-          .startClean();
-
-      _client!.connectionMessage = connMessage;
-
-      // Add credentials if available
-      if (await _settings!.hasCredentials()) {
-        final password = await _settings!.getPassword();
-        _client!.connectionMessage = connMessage.authenticateAs(_settings!.username, password);
-      }
-
-      // Connect to broker
-      _log.info('Connecting to MQTT broker ${_settings!.broker}:${_settings!.port}...');
-      await _client!.connect();
-
-      // Wait for connection or error
-      await Future.delayed(const Duration(seconds: 3));
-
-      if (_client!.connectionStatus?.state == MqttConnectionState.connected) {
-        _log.info('Connected to MQTT broker');
-        _startKeepAliveTimer();
-
-        // Publish online status
-        publishAvailability(true);
-
-        // Publish device discovery configuration
-        publishDiscoveryConfig();
-
-        return true;
-      } else {
-        _log.warning('Connection failed: ${_client!.connectionStatus?.returnCode}');
-        _updateStatus(MqttConnectionStatus.error);
-        return false;
-      }
-    } catch (e) {
-      _log.severe('Exception during MQTT connection: $e');
-      _updateStatus(MqttConnectionStatus.error);
-      return false;
-    }
-  }
-
-  /// Disconnect from the MQTT broker
-  Future<void> disconnect() async {
-    if (_client != null && _client!.connectionStatus?.state == MqttConnectionState.connected) {
-      _log.info('Disconnecting from MQTT broker...');
-
-      try {
-        // Publish offline status
-        publishAvailability(false);
-
-        // Wait for message to be sent
-        await Future.delayed(const Duration(milliseconds: 500));
-
-        // Disconnect
-        _client!.disconnect();
-      } catch (e) {
-        _log.warning('Error during disconnect: $e');
-      }
-    }
-
-    _stopKeepAliveTimer();
+  /// Reset the reported status to disconnected - for when the user turns
+  /// MQTT off in Settings. Nothing to actually disconnect (no persistent
+  /// session exists between calls), just stop claiming "connected" for a
+  /// feature that's now off.
+  void reset() {
     _updateStatus(MqttConnectionStatus.disconnected);
   }
 
-  /// Publish message to a topic
-  Future<bool> publish(String topic, String message, {bool retain = false}) async {
-    // Check if app is in mock mode
+  /// Test [settings] with a bare connect-then-disconnect, no data
+  /// published. Used by the Settings screen's "Test Connection" - safe to
+  /// call regardless of whether `settings.enabled` is set, since testing
+  /// is exactly what happens while deciding whether to enable it.
+  Future<bool> testConnection(MqttSettings settings) async {
     if (AppState.instance.mockMode) {
-      _log.info('MOCK MQTT PUBLISH - Topic: $topic, Message: $message, Retain: $retain');
-      return true; // Simulate successful publish
-    }
-
-    if (!isConnected || _client == null) {
-      _log.warning('Cannot publish: Not connected');
-      return false;
-    }
-
-    try {
-      final builder = MqttClientPayloadBuilder();
-      builder.addString(message);
-
-      // Get QoS from settings
-      final qos = _getQosLevel();
-
-      _client!.publishMessage(topic, qos, builder.payload!, retain: retain);
+      _log.info('MOCK MQTT TEST CONNECTION - simulating success');
+      _updateStatus(MqttConnectionStatus.connected);
       return true;
-    } catch (e) {
-      _log.warning('Error publishing to $topic: $e');
-      return false;
     }
+
+    final client = await _connectOnce(settings);
+    if (client == null) return false;
+    _disconnectOnce(client);
+    return true;
   }
 
-  /// Publish battery data to MQTT
+  /// Publish one full battery-data cycle: connect, publish every provided
+  /// value to its own state topic plus the combined data topic and the
+  /// Home Assistant discovery configs, then disconnect - always, even if
+  /// a publish call above failed partway through.
   Future<bool> publishBatteryData({
+    required MqttSettings settings,
     required double stateOfCharge,
     required double batteryHealth,
     required double batteryVoltage,
     required double batteryCapacity,
-    double? estimatedRange,
     String? sessionId,
     // Analytics fields (data-pipeline plan, Phase B) - best-effort OBD
-    // reads, so any of these may be absent on a given cycle even once
-    // wired in; see BluetoothDeviceManager.collectCarData().
+    // reads, so any of these may be absent on a given cycle; see
+    // BluetoothDeviceManager.collectCarData().
+    //
+    // No estimatedRange parameter - deliberately not published. See the
+    // "REMOVED" note by OBDCommand.extractInt in obd_command.dart: the
+    // OBD command that used to feed this returned a frozen value
+    // regardless of actual SOC/driving, so there was never anything real
+    // to publish here.
     double? speed,
     int? odometer,
     double? ambientTemp,
     int? l1l2Charges,
     int? quickCharges,
   }) async {
-    // Check if app is in mock mode
     if (AppState.instance.mockMode) {
       _log.info('MOCK MQTT PUBLISH BATTERY DATA - '
           'SOC: $stateOfCharge%, Health: $batteryHealth%, Voltage: $batteryVoltage V, '
-          'Capacity: $batteryCapacity Ah, Range: ${estimatedRange ?? "N/A"} km, '
-          'Session: ${sessionId ?? "N/A"}');
-      return true; // Simulate successful publish
+          'Capacity: $batteryCapacity Ah, Session: ${sessionId ?? "N/A"}');
+      return true;
     }
 
-    if (!isConnected || _settings == null) {
-      return false;
-    }
+    final client = await _connectOnce(settings);
+    if (client == null) return false;
 
     try {
-      // Create a data map
       final data = {
         'state_of_charge': stateOfCharge,
         'battery_health': batteryHealth,
@@ -298,235 +126,249 @@ class MqttClient {
         'battery_capacity': batteryCapacity,
         'timestamp': DateTime.now().toIso8601String(),
       };
-
-      // Add optional fields if present
-      if (estimatedRange != null) {
-        data['estimated_range'] = estimatedRange;
-      }
-
-      if (sessionId != null) {
-        data['session_id'] = sessionId;
-      }
-
+      if (sessionId != null) data['session_id'] = sessionId;
       if (speed != null) data['speed'] = speed;
       if (odometer != null) data['odometer'] = odometer;
       if (ambientTemp != null) data['ambient_temp'] = ambientTemp;
       if (l1l2Charges != null) data['l1l2_charges'] = l1l2Charges;
       if (quickCharges != null) data['quick_charges'] = quickCharges;
 
-      // Publish individual values to separate topics for Home Assistant
-      await publish(_settings!.getStateTopic('soc'), stateOfCharge.toString(), retain: true);
-      await publish(_settings!.getStateTopic('health'), batteryHealth.toString(), retain: true);
-      await publish(_settings!.getStateTopic('voltage'), batteryVoltage.toString(), retain: true);
-      await publish(_settings!.getStateTopic('capacity'), batteryCapacity.toString(), retain: true);
-
-      if (estimatedRange != null) {
-        await publish(_settings!.getStateTopic('range'), estimatedRange.toString(), retain: true);
-      }
+      _publish(client, settings, settings.getStateTopic('soc'), stateOfCharge.toString());
+      _publish(client, settings, settings.getStateTopic('health'), batteryHealth.toString());
+      _publish(client, settings, settings.getStateTopic('voltage'), batteryVoltage.toString());
+      _publish(client, settings, settings.getStateTopic('capacity'), batteryCapacity.toString());
       if (speed != null) {
-        await publish(_settings!.getStateTopic('speed'), speed.toString(), retain: true);
+        _publish(client, settings, settings.getStateTopic('speed'), speed.toString());
       }
       if (odometer != null) {
-        await publish(_settings!.getStateTopic('odometer'), odometer.toString(), retain: true);
+        _publish(client, settings, settings.getStateTopic('odometer'), odometer.toString());
       }
       if (ambientTemp != null) {
-        await publish(_settings!.getStateTopic('ambient_temp'), ambientTemp.toString(),
-            retain: true);
+        _publish(client, settings, settings.getStateTopic('ambient_temp'), ambientTemp.toString());
       }
       if (l1l2Charges != null) {
-        await publish(
-            _settings!.getStateTopic('l1l2_charges'), l1l2Charges.toString(),
-            retain: true);
+        _publish(client, settings, settings.getStateTopic('l1l2_charges'), l1l2Charges.toString());
       }
       if (quickCharges != null) {
-        await publish(
-            _settings!.getStateTopic('quick_charges'), quickCharges.toString(),
-            retain: true);
+        _publish(
+            client, settings, settings.getStateTopic('quick_charges'), quickCharges.toString());
       }
 
-      // Also publish the full data object to a single topic
-      final fullDataTopic = '${_settings!.topicPrefix}/${_settings!.clientId}/data';
-      await publish(fullDataTopic, jsonEncode(data), retain: true);
+      final fullDataTopic = '${settings.topicPrefix}/${settings.clientId}/data';
+      _publish(client, settings, fullDataTopic, jsonEncode(data));
+
+      _publishDiscoveryConfig(client, settings);
 
       return true;
     } catch (e) {
       _log.warning('Error publishing battery data: $e');
       return false;
+    } finally {
+      _disconnectOnce(client);
     }
   }
 
-  /// Publish Home Assistant discovery configuration
-  Future<void> publishDiscoveryConfig() async {
-    // Check if in mock mode
-    if (AppState.instance.mockMode) {
-      _log.info(
-          'MOCK MQTT PUBLISH - Home Assistant discovery configuration (skipping details for brevity)');
-      return;
+  /// Connect [settings] and return the client, or null (with status
+  /// already updated to [MqttConnectionStatus.error]) on any failure.
+  /// Every caller must disconnect what this returns, including on their
+  /// own failure paths - there is no auto-reconnect or lingering session
+  /// to clean up later.
+  Future<MqttServerClient?> _connectOnce(MqttSettings settings) async {
+    if (!settings.isValid()) {
+      _log.warning('Cannot connect: Invalid or missing MQTT settings');
+      _updateStatus(MqttConnectionStatus.error);
+      return null;
     }
 
-    if (!isConnected || _settings == null) {
-      return;
+    final connectivityResults = await _connectivity.checkConnectivity();
+    if (!connectivityResults.any((result) => result != ConnectivityResult.none)) {
+      _log.warning('Cannot connect: No network connectivity');
+      _updateStatus(MqttConnectionStatus.error);
+      return null;
     }
+
+    _updateStatus(MqttConnectionStatus.connecting);
 
     try {
-      // Device information (shared across all entities)
+      // useWebSocket needs a full "wss://host" URI, not a bare hostname
+      // (see MqttServerWsConnection.connect in the mqtt_client package) -
+      // raw TCP mode wants just the hostname. WebSocket mode is for
+      // brokers only reachable that way, e.g. behind a reverse proxy like
+      // Cloudflare's standard proxy, which forwards WebSocket upgrades but
+      // not raw TCP MQTT on 1883/8883.
+      final server = settings.useWebSocket ? 'wss://${settings.broker}' : settings.broker;
+      final client = MqttServerClient(server, settings.clientId);
+      client.useWebSocket = settings.useWebSocket;
+      if (settings.useWebSocket) {
+        // Default is ['mqtt', 'mqttv3.1', 'mqttv3.11'] - some brokers/
+        // reverse proxies expect exactly one Sec-WebSocket-Protocol value
+        // and error (a 502 from Cloudflare in one real case) on more.
+        client.websocketProtocols = MqttClientConstants.protocolsSingleDefault;
+      }
+
+      client.port = settings.port;
+      // No autoReconnect and no keep-alive timer: one-shot, we own the
+      // connect/disconnect lifecycle explicitly and never leave a session
+      // open long enough to need either.
+      client.autoReconnect = false;
+      client.keepAlivePeriod = 20;
+
+      // Set secure connection if using port 8883. Irrelevant in WebSocket
+      // mode - the package ignores `secure` there and takes TLS-or-not
+      // purely from the wss:// scheme above.
+      if (!settings.useWebSocket && settings.port == 8883) {
+        client.secure = true;
+      }
+
+      // MQTT 3.1.1 ("MQTT"/4) explicitly - the package defaults to the
+      // old 3.1 handshake ("MQIsdp"/3), which one real broker CONNACKed
+      // but then closed within ~60ms of, repeatedly.
+      var connMessage = MqttConnectMessage()
+          .withProtocolName(MqttClientConstants.mqttV311ProtocolName)
+          .withProtocolVersion(MqttClientConstants.mqttV311ProtocolVersion)
+          .withClientIdentifier(settings.clientId)
+          .startClean();
+
+      if (await settings.hasCredentials()) {
+        final password = await settings.getPassword();
+        connMessage = connMessage.authenticateAs(settings.username, password);
+      }
+      client.connectionMessage = connMessage;
+
+      _log.info('Connecting to MQTT broker ${settings.broker}:${settings.port}...');
+      await client.connect();
+
+      if (client.connectionStatus?.state == MqttConnectionState.connected) {
+        _log.info('Connected to MQTT broker');
+        _updateStatus(MqttConnectionStatus.connected);
+        return client;
+      } else {
+        _log.warning('Connection failed: ${client.connectionStatus?.returnCode}');
+        _updateStatus(MqttConnectionStatus.error);
+        return null;
+      }
+    } catch (e) {
+      _log.severe('Exception during MQTT connection: $e');
+      _updateStatus(MqttConnectionStatus.error);
+      return null;
+    }
+  }
+
+  /// Disconnect [client]. Deliberately does not touch [_connectionStatus]
+  /// on success - the last attempt's outcome (connected/error) stays
+  /// reported until the next attempt, rather than flapping to
+  /// "disconnected" every cycle for a connection that closing was always
+  /// going to do anyway. See the enum doc.
+  void _disconnectOnce(MqttServerClient client) {
+    try {
+      client.disconnect();
+    } catch (e) {
+      _log.warning('Error during disconnect: $e');
+    }
+  }
+
+  void _publish(MqttServerClient client, MqttSettings settings, String topic, String message) {
+    try {
+      final builder = MqttClientPayloadBuilder();
+      builder.addString(message);
+      client.publishMessage(topic, _getQosLevel(settings), builder.payload!, retain: true);
+    } catch (e) {
+      _log.warning('Error publishing to $topic: $e');
+    }
+  }
+
+  /// How long Home Assistant should wait, after the last update to a
+  /// sensor's state topic, before marking it unavailable/stale. There is
+  /// no online/offline availability topic any more (that model assumes a
+  /// live connection - see the class doc); this is HA's own primitive for
+  /// "reports occasionally, not continuously", so it needs no bookkeeping
+  /// on our side. Set generously above the default 1-minute collection
+  /// interval (BackgroundService.defaultFrequency) so an occasional missed
+  /// cycle doesn't flap a sensor to unavailable and back.
+  static const int _expireAfterSeconds = 180;
+
+  void _publishDiscoveryConfig(MqttServerClient client, MqttSettings settings) {
+    try {
       final deviceInfo = {
-        'identifiers': [_settings!.clientId],
+        'identifiers': [settings.clientId],
         'name': 'Nissan Leaf Battery Tracker',
         'model': 'Nissan Leaf',
         'manufacturer': 'Nissan',
         'sw_version': '1.0.0',
       };
 
-      // State of Charge sensor
-      final socConfig = {
-        'name': 'Nissan Leaf Battery Level',
-        'device_class': 'battery',
-        'state_class': 'measurement',
-        'unit_of_measurement': '%',
-        'state_topic': _settings!.getStateTopic('soc'),
-        'availability_topic': _settings!.getAvailabilityTopic(),
-        'icon': 'mdi:car-electric',
-        'unique_id': '${_settings!.clientId}_soc',
-        'device': deviceInfo,
+      final sensors = <String, Map<String, dynamic>>{
+        'soc': {
+          'name': 'Nissan Leaf Battery Level',
+          'device_class': 'battery',
+          'state_class': 'measurement',
+          'unit_of_measurement': '%',
+          'icon': 'mdi:car-electric',
+        },
+        'health': {
+          'name': 'Nissan Leaf Battery Health',
+          'device_class': 'battery',
+          'state_class': 'measurement',
+          'unit_of_measurement': '%',
+          'icon': 'mdi:heart-pulse',
+        },
+        'voltage': {
+          'name': 'Nissan Leaf Battery Voltage',
+          'device_class': 'voltage',
+          'state_class': 'measurement',
+          'unit_of_measurement': 'V',
+          'icon': 'mdi:lightning-bolt',
+        },
+        'capacity': {
+          'name': 'Nissan Leaf Battery Capacity',
+          'state_class': 'measurement',
+          'unit_of_measurement': 'Ah',
+          'icon': 'mdi:battery',
+        },
+        'speed': {
+          'name': 'Nissan Leaf Speed',
+          'device_class': 'speed',
+          'state_class': 'measurement',
+          'unit_of_measurement': 'km/h',
+          'icon': 'mdi:speedometer',
+        },
+        'odometer': {
+          'name': 'Nissan Leaf Odometer',
+          'device_class': 'distance',
+          'state_class': 'total_increasing',
+          'unit_of_measurement': 'km',
+          'icon': 'mdi:counter',
+        },
+        'ambient_temp': {
+          'name': 'Nissan Leaf Ambient Temperature',
+          'device_class': 'temperature',
+          'state_class': 'measurement',
+          'unit_of_measurement': '°C',
+          'icon': 'mdi:thermometer',
+        },
+        'l1l2_charges': {
+          'name': 'Nissan Leaf L1/L2 Charges',
+          'state_class': 'total_increasing',
+          'icon': 'mdi:ev-plug-type1',
+        },
+        'quick_charges': {
+          'name': 'Nissan Leaf Quick Charges',
+          'state_class': 'total_increasing',
+          'icon': 'mdi:ev-station',
+        },
       };
 
-      // Battery Health sensor
-      final healthConfig = {
-        'name': 'Nissan Leaf Battery Health',
-        'device_class': 'battery',
-        'state_class': 'measurement',
-        'unit_of_measurement': '%',
-        'state_topic': _settings!.getStateTopic('health'),
-        'availability_topic': _settings!.getAvailabilityTopic(),
-        'icon': 'mdi:heart-pulse',
-        'unique_id': '${_settings!.clientId}_health',
-        'device': deviceInfo,
-      };
-
-      // Battery Voltage sensor
-      final voltageConfig = {
-        'name': 'Nissan Leaf Battery Voltage',
-        'device_class': 'voltage',
-        'state_class': 'measurement',
-        'unit_of_measurement': 'V',
-        'state_topic': _settings!.getStateTopic('voltage'),
-        'availability_topic': _settings!.getAvailabilityTopic(),
-        'icon': 'mdi:lightning-bolt',
-        'unique_id': '${_settings!.clientId}_voltage',
-        'device': deviceInfo,
-      };
-
-      // Battery Capacity sensor
-      final capacityConfig = {
-        'name': 'Nissan Leaf Battery Capacity',
-        'state_class': 'measurement',
-        'unit_of_measurement': 'Ah',
-        'state_topic': _settings!.getStateTopic('capacity'),
-        'availability_topic': _settings!.getAvailabilityTopic(),
-        'icon': 'mdi:battery',
-        'unique_id': '${_settings!.clientId}_capacity',
-        'device': deviceInfo,
-      };
-
-      // Range sensor
-      final rangeConfig = {
-        'name': 'Nissan Leaf Range',
-        'device_class': 'distance',
-        'state_class': 'measurement',
-        'unit_of_measurement': 'km',
-        'state_topic': _settings!.getStateTopic('range'),
-        'availability_topic': _settings!.getAvailabilityTopic(),
-        'icon': 'mdi:map-marker-distance',
-        'unique_id': '${_settings!.clientId}_range',
-        'device': deviceInfo,
-      };
-
-      // Speed sensor
-      final speedConfig = {
-        'name': 'Nissan Leaf Speed',
-        'device_class': 'speed',
-        'state_class': 'measurement',
-        'unit_of_measurement': 'km/h',
-        'state_topic': _settings!.getStateTopic('speed'),
-        'availability_topic': _settings!.getAvailabilityTopic(),
-        'icon': 'mdi:speedometer',
-        'unique_id': '${_settings!.clientId}_speed',
-        'device': deviceInfo,
-      };
-
-      // Odometer sensor
-      final odometerConfig = {
-        'name': 'Nissan Leaf Odometer',
-        'device_class': 'distance',
-        'state_class': 'total_increasing',
-        'unit_of_measurement': 'km',
-        'state_topic': _settings!.getStateTopic('odometer'),
-        'availability_topic': _settings!.getAvailabilityTopic(),
-        'icon': 'mdi:counter',
-        'unique_id': '${_settings!.clientId}_odometer',
-        'device': deviceInfo,
-      };
-
-      // Ambient temperature sensor
-      final ambientTempConfig = {
-        'name': 'Nissan Leaf Ambient Temperature',
-        'device_class': 'temperature',
-        'state_class': 'measurement',
-        'unit_of_measurement': '°C',
-        'state_topic': _settings!.getStateTopic('ambient_temp'),
-        'availability_topic': _settings!.getAvailabilityTopic(),
-        'icon': 'mdi:thermometer',
-        'unique_id': '${_settings!.clientId}_ambient_temp',
-        'device': deviceInfo,
-      };
-
-      // L1/L2 charge count sensor
-      final l1l2ChargesConfig = {
-        'name': 'Nissan Leaf L1/L2 Charges',
-        'state_class': 'total_increasing',
-        'state_topic': _settings!.getStateTopic('l1l2_charges'),
-        'availability_topic': _settings!.getAvailabilityTopic(),
-        'icon': 'mdi:ev-plug-type1',
-        'unique_id': '${_settings!.clientId}_l1l2_charges',
-        'device': deviceInfo,
-      };
-
-      // Quick charge count sensor
-      final quickChargesConfig = {
-        'name': 'Nissan Leaf Quick Charges',
-        'state_class': 'total_increasing',
-        'state_topic': _settings!.getStateTopic('quick_charges'),
-        'availability_topic': _settings!.getAvailabilityTopic(),
-        'icon': 'mdi:ev-station',
-        'unique_id': '${_settings!.clientId}_quick_charges',
-        'device': deviceInfo,
-      };
-
-      // Publish all configurations
-      await publish(_settings!.getDiscoveryTopic('sensor', 'soc'), jsonEncode(socConfig),
-          retain: true);
-      await publish(_settings!.getDiscoveryTopic('sensor', 'health'), jsonEncode(healthConfig),
-          retain: true);
-      await publish(_settings!.getDiscoveryTopic('sensor', 'voltage'), jsonEncode(voltageConfig),
-          retain: true);
-      await publish(_settings!.getDiscoveryTopic('sensor', 'capacity'), jsonEncode(capacityConfig),
-          retain: true);
-      await publish(_settings!.getDiscoveryTopic('sensor', 'range'), jsonEncode(rangeConfig),
-          retain: true);
-      await publish(_settings!.getDiscoveryTopic('sensor', 'speed'), jsonEncode(speedConfig),
-          retain: true);
-      await publish(_settings!.getDiscoveryTopic('sensor', 'odometer'), jsonEncode(odometerConfig),
-          retain: true);
-      await publish(_settings!.getDiscoveryTopic('sensor', 'ambient_temp'),
-          jsonEncode(ambientTempConfig),
-          retain: true);
-      await publish(_settings!.getDiscoveryTopic('sensor', 'l1l2_charges'),
-          jsonEncode(l1l2ChargesConfig),
-          retain: true);
-      await publish(_settings!.getDiscoveryTopic('sensor', 'quick_charges'),
-          jsonEncode(quickChargesConfig),
-          retain: true);
+      for (final entry in sensors.entries) {
+        final config = {
+          ...entry.value,
+          'state_topic': settings.getStateTopic(entry.key),
+          'expire_after': _expireAfterSeconds,
+          'unique_id': '${settings.clientId}_${entry.key}',
+          'device': deviceInfo,
+        };
+        _publish(client, settings, settings.getDiscoveryTopic('sensor', entry.key),
+            jsonEncode(config));
+      }
 
       _log.info('Published Home Assistant discovery configuration');
     } catch (e) {
@@ -534,81 +376,8 @@ class MqttClient {
     }
   }
 
-  /// Publish availability status
-  Future<bool> publishAvailability(bool online) async {
-    // Check if in mock mode
-    if (AppState.instance.mockMode) {
-      _log.info('MOCK MQTT PUBLISH AVAILABILITY - Status: ${online ? "online" : "offline"}');
-      return true; // Simulate successful publish
-    }
-
-    if (_settings == null) {
-      return false;
-    }
-
-    try {
-      final availabilityTopic = _settings!.getAvailabilityTopic();
-      final status = online ? 'online' : 'offline';
-
-      // If disconnected, we use a direct publish method since the client may not be available
-      if (!online &&
-          (_client == null || _client!.connectionStatus?.state != MqttConnectionState.connected)) {
-        // In this case, we can't publish the message
-        return false;
-      }
-
-      return await publish(availabilityTopic, status, retain: true);
-    } catch (e) {
-      _log.warning('Error publishing availability: $e');
-      return false;
-    }
-  }
-
-  /// Update connection status and notify listeners
-  void _updateStatus(MqttConnectionStatus status) {
-    _connectionStatus = status;
-    _connectionStatusController.add(status);
-  }
-
-  /// Start keep-alive timer to periodically check connection
-  void _startKeepAliveTimer() {
-    _keepAliveTimer?.cancel();
-    _keepAliveTimer = Timer.periodic(const Duration(minutes: 5), (timer) {
-      // Check if still connected
-      if (_client == null || _client!.connectionStatus?.state != MqttConnectionState.connected) {
-        _log.info('Keep-alive check: connection lost, attempting to reconnect...');
-        _reconnect();
-      } else {
-        // Publish availability to ensure the connection is active
-        publishAvailability(true);
-      }
-    });
-  }
-
-  /// Stop the keep-alive timer
-  void _stopKeepAliveTimer() {
-    _keepAliveTimer?.cancel();
-    _keepAliveTimer = null;
-  }
-
-  /// Attempt to reconnect
-  Future<void> _reconnect() async {
-    if (_connectionStatus == MqttConnectionStatus.connecting) {
-      return; // Already trying to connect
-    }
-
-    disconnect();
-    await Future.delayed(const Duration(seconds: 2));
-    connect();
-  }
-
-  /// Get QoS level from settings
-  MqttQos _getQosLevel() {
-    if (_settings == null) {
-      return MqttQos.atMostOnce;
-    }
-
-    switch (_settings!.qos) {
+  MqttQos _getQosLevel(MqttSettings settings) {
+    switch (settings.qos) {
       case 1:
         return MqttQos.atLeastOnce;
       case 2:
@@ -619,34 +388,12 @@ class MqttClient {
     }
   }
 
-  /// Callback for when client connects
-  void _onConnected() {
-    _log.info('Connected to MQTT broker');
-    _updateStatus(MqttConnectionStatus.connected);
+  void _updateStatus(MqttConnectionStatus status) {
+    _connectionStatus = status;
+    _connectionStatusController.add(status);
   }
 
-  /// Callback for when client disconnects
-  void _onDisconnected() {
-    _log.info('Disconnected from MQTT broker');
-    _updateStatus(MqttConnectionStatus.disconnected);
-    _stopKeepAliveTimer();
-  }
-
-  /// Callback for when client starts auto-reconnect
-  void _onAutoReconnect() {
-    _log.info('Auto-reconnecting to MQTT broker');
-    _updateStatus(MqttConnectionStatus.connecting);
-  }
-
-  /// Callback for when client subscribes to a topic
-  void _onSubscribed(String topic) {
-    _log.info('Subscribed to topic: $topic');
-  }
-
-  /// Dispose of resources
   void dispose() {
-    disconnect();
-    _stopKeepAliveTimer();
     _connectionStatusController.close();
   }
 }
