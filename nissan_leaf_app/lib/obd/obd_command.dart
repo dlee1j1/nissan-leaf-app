@@ -390,7 +390,8 @@ class _AmbientTempCommand extends OBDCommand {
   Map<String, dynamic> decode(List<int> data) {
     return {
       // Corrected against a byte-exact "Nissan Leaf 2018" UDS PID reference
-      // (ze1_polling.pdf, via dalathegreat/leaf_can_bus_messages): the raw
+      // (ze1_polling.pdf, via dalathegreat/leaf_can_bus_messages - see
+      // "Where the PID/decode definitions came from" in readme.md): the raw
       // byte is first converted to °F (data*0.9-40.9), then to °C - not the
       // simpler data/2-40 this originally had, which was off by a constant
       // 0.5°C. See the data-pipeline plan, Phase A.
@@ -738,7 +739,8 @@ class _TpRlCommand extends OBDCommand {
 // formula fix: real captures showed the raw response bytes staying
 // byte-for-byte identical across sessions with meaningfully different
 // SOC, and even mid-drive - a frozen value, not a decode bug (the formula
-// matches the documented reference exactly). Most likely PID 0E24 isn't
+// matches the ze1_polling.pdf reference exactly - see "Where the PID/
+// decode definitions came from" in readme.md). Most likely PID 0E24 isn't
 // actually a live "current remaining range" signal at all, despite how
 // that reference doc labels it - that entry was already the one with a
 // mismatched query/response PID in the doc, i.e. already its least

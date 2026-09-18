@@ -154,3 +154,38 @@ The Nissan Leaf has evolved across model years, with significant changes to the 
 - **2022+ (Gen 3)**: Substantial differences, limited testing done
 
 Contributors are encouraged to document their findings for specific model years in the comments of `obd_command.dart`.
+
+## Where the PID/decode definitions came from
+
+Most of `obd_command.dart`'s registry (everything except `lbc` and
+`rangeRemaining`, the two that were exercised in production before
+2026-09) was bulk-copied from another project's command table in one
+Feb 2025 commit, with no source preserved in the repo. Dennis has since
+confirmed several of those formulas don't hold up on his actual 2018
+Gen2 Leaf.
+
+**Validated against the real car, byte-exact (2026-09):**
+`speed`, `odometer`, `ambientTemp`, `l1l2Charges`, `quickCharges` - checked
+against `ze1_polling.pdf`, a byte-exact "Nissan Leaf 2018" UDS PID
+reference (same `03 22 <PID>` / header `797`/`743` scheme this codebase
+uses), then confirmed live via the OBD Test Page. Source:
+<https://drive.google.com/file/d/1jH9cgm5v23qnqVnmZN3p4TvdaokWKPjM/view>,
+linked from
+[dalathegreat/leaf_can_bus_messages](https://github.com/dalathegreat/leaf_can_bus_messages)'s
+README under "What about active CAN-polling?". That repo's own DBC files
+(broadcast CAN, a different addressing scheme) independently corroborate
+at least the `ambientTemp` scale factor.
+
+**Everything else in the registry**: unverified. Copied from
+[pbutterworth/py-nissan-leaf-obd-ble](https://github.com/pbutterworth/py-nissan-leaf-obd-ble)
+(itself the likely origin of the Feb 2025 bulk copy here), which is a
+reasonable starting point for a new command but not a source to trust
+without checking against `ze1_polling.pdf` and/or the real car first -
+that's exactly what caught `ambientTemp` being off by a constant and
+ruled out `rangeRemaining` entirely (removed - see the note in
+`obd_command.dart` near `extractInt`).
+
+**LeafSpy** (the commercial Turbo3 app) is known-good and worth
+cross-checking against if a command still doesn't make sense after the
+above - it has no public PID list, but its own Settings → Server export
+pushes already-decoded values that can serve as ground truth.
