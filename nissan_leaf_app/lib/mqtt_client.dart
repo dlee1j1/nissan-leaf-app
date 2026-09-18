@@ -114,6 +114,14 @@ class MqttClient {
           _settings!.useWebSocket ? 'wss://${_settings!.broker}' : _settings!.broker;
       _client = MqttServerClient(server, _settings!.clientId);
       _client!.useWebSocket = _settings!.useWebSocket;
+      if (_settings!.useWebSocket) {
+        // Default is ['mqtt', 'mqttv3.1', 'mqttv3.11'] - some brokers/
+        // reverse proxies expect exactly one Sec-WebSocket-Protocol value
+        // and error on more (a 502 from Cloudflare in this app's case).
+        // Match the single value a plain `new WebSocket(url, 'mqtt')` test
+        // sends, since that's confirmed to work against this broker.
+        _client!.websocketProtocols = MqttClientConstants.protocolsSingleDefault;
+      }
 
       // Set up client options
       _client!.port = _settings!.port;
