@@ -391,7 +391,12 @@ class _AmbientTempCommand extends OBDCommand {
   @override
   Map<String, dynamic> decode(List<int> data) {
     return {
-      'ambient_temp': data[3] / 2 - 40,
+      // Corrected against a byte-exact "Nissan Leaf 2018" UDS PID reference
+      // (ze1_polling.pdf, via dalathegreat/leaf_can_bus_messages): the raw
+      // byte is first converted to °F (data*0.9-40.9), then to °C - not the
+      // simpler data/2-40 this originally had, which was off by a constant
+      // 0.5°C. See the data-pipeline plan, Phase A.
+      'ambient_temp': data[3] * 0.5 - 40.5,
     };
   }
 }
@@ -740,26 +745,20 @@ class _RangeRemainingCommand extends OBDCommand {
 
   @override
   Map<String, dynamic> decode(List<int> data) {
+    // KNOWN BROKEN (data-pipeline plan, Phase A): this reads a frozen value
+    // regardless of actual SOC/driving - confirmed via real captures where
+    // the raw response bytes stayed byte-for-byte identical across sessions
+    // with meaningfully different SOC, and even mid-drive. Not simply a
+    // wrong byte offset (extractInt(data,3,5) matches the documented
+    // formula exactly); more likely PID 0E24 isn't actually a live
+    // "current remaining range" signal at all, despite how the reference
+    // doc labels it - that entry was already the one with a mismatched
+    // query/response PID in the doc, i.e. already the least trustworthy
+    // entry there. Parked rather than fixed - the dash's own range display
+    // is ground truth until this gets a real answer (e.g. cross-checked
+    // against LeafSpy).
     return {
       'range_remaining': extractInt(data, 3, 5) / 10,
-      // TEMPORARY (data-pipeline plan, Phase A follow-up): range_remaining
-      // is reading a static ~2.4km on the real car despite matching the
-      // documented formula, and the reference project's own command table
-      // declares this response as 13 bytes long while the doc's worked
-      // example shows a 5-byte single frame - this exposes which one
-      // Dennis's car actually sends, to settle whether extractInt(data,3,5)
-      // is landing on the wrong bytes of a longer response. Remove once
-      // diagnosed.
-      'range_remaining_raw_length': data.length,
-      'range_remaining_raw_bytes': data.toString(),
-      // UNCONFIRMED candidate from one manual sample: bytes 5-6 (0x42 0x08 =
-      // 16904 in the captured sample) / 100, read directly as miles rather
-      // than km - came out ~169.0mi against a dash reading of ~172mi
-      // (~1.7% off, closer than any other byte-pair/scale combo tried).
-      // Needs a second sample at a meaningfully different range to confirm
-      // this actually scales, not just eyeball against one dash glance.
-      // Remove once confirmed or ruled out.
-      if (data.length > 6) 'range_remaining_candidate_miles': extractInt(data, 5, 7) / 100,
     };
   }
 }

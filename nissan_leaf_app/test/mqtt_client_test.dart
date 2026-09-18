@@ -100,5 +100,24 @@ void main() {
               ),
           returnsNormally);
     });
+
+    test('correctly formats battery data including analytics fields (Phase B)', () async {
+      await mqttClient.initialize(settings);
+
+      expect(
+          () => mqttClient.publishBatteryData(
+                stateOfCharge: 75.5,
+                batteryHealth: 92.0,
+                batteryVoltage: 364.5,
+                batteryCapacity: 56.0,
+                estimatedRange: 150.0,
+                speed: 42.0,
+                odometer: 41400,
+                ambientTemp: 21.5,
+                l1l2Charges: 588,
+                quickCharges: 11,
+              ),
+          returnsNormally);
+    });
   });
 }

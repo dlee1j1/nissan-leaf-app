@@ -227,6 +227,14 @@ class MqttClient {
     required double batteryCapacity,
     double? estimatedRange,
     String? sessionId,
+    // Analytics fields (data-pipeline plan, Phase B) - best-effort OBD
+    // reads, so any of these may be absent on a given cycle even once
+    // wired in; see BluetoothDeviceManager.collectCarData().
+    double? speed,
+    int? odometer,
+    double? ambientTemp,
+    int? l1l2Charges,
+    int? quickCharges,
   }) async {
     // Check if app is in mock mode
     if (AppState.instance.mockMode) {
@@ -260,6 +268,12 @@ class MqttClient {
         data['session_id'] = sessionId;
       }
 
+      if (speed != null) data['speed'] = speed;
+      if (odometer != null) data['odometer'] = odometer;
+      if (ambientTemp != null) data['ambient_temp'] = ambientTemp;
+      if (l1l2Charges != null) data['l1l2_charges'] = l1l2Charges;
+      if (quickCharges != null) data['quick_charges'] = quickCharges;
+
       // Publish individual values to separate topics for Home Assistant
       await publish(_settings!.getStateTopic('soc'), stateOfCharge.toString(), retain: true);
       await publish(_settings!.getStateTopic('health'), batteryHealth.toString(), retain: true);
@@ -268,6 +282,26 @@ class MqttClient {
 
       if (estimatedRange != null) {
         await publish(_settings!.getStateTopic('range'), estimatedRange.toString(), retain: true);
+      }
+      if (speed != null) {
+        await publish(_settings!.getStateTopic('speed'), speed.toString(), retain: true);
+      }
+      if (odometer != null) {
+        await publish(_settings!.getStateTopic('odometer'), odometer.toString(), retain: true);
+      }
+      if (ambientTemp != null) {
+        await publish(_settings!.getStateTopic('ambient_temp'), ambientTemp.toString(),
+            retain: true);
+      }
+      if (l1l2Charges != null) {
+        await publish(
+            _settings!.getStateTopic('l1l2_charges'), l1l2Charges.toString(),
+            retain: true);
+      }
+      if (quickCharges != null) {
+        await publish(
+            _settings!.getStateTopic('quick_charges'), quickCharges.toString(),
+            retain: true);
       }
 
       // Also publish the full data object to a single topic
@@ -368,6 +402,67 @@ class MqttClient {
         'device': deviceInfo,
       };
 
+      // Speed sensor
+      final speedConfig = {
+        'name': 'Nissan Leaf Speed',
+        'device_class': 'speed',
+        'state_class': 'measurement',
+        'unit_of_measurement': 'km/h',
+        'state_topic': _settings!.getStateTopic('speed'),
+        'availability_topic': _settings!.getAvailabilityTopic(),
+        'icon': 'mdi:speedometer',
+        'unique_id': '${_settings!.clientId}_speed',
+        'device': deviceInfo,
+      };
+
+      // Odometer sensor
+      final odometerConfig = {
+        'name': 'Nissan Leaf Odometer',
+        'device_class': 'distance',
+        'state_class': 'total_increasing',
+        'unit_of_measurement': 'km',
+        'state_topic': _settings!.getStateTopic('odometer'),
+        'availability_topic': _settings!.getAvailabilityTopic(),
+        'icon': 'mdi:counter',
+        'unique_id': '${_settings!.clientId}_odometer',
+        'device': deviceInfo,
+      };
+
+      // Ambient temperature sensor
+      final ambientTempConfig = {
+        'name': 'Nissan Leaf Ambient Temperature',
+        'device_class': 'temperature',
+        'state_class': 'measurement',
+        'unit_of_measurement': '°C',
+        'state_topic': _settings!.getStateTopic('ambient_temp'),
+        'availability_topic': _settings!.getAvailabilityTopic(),
+        'icon': 'mdi:thermometer',
+        'unique_id': '${_settings!.clientId}_ambient_temp',
+        'device': deviceInfo,
+      };
+
+      // L1/L2 charge count sensor
+      final l1l2ChargesConfig = {
+        'name': 'Nissan Leaf L1/L2 Charges',
+        'state_class': 'total_increasing',
+        'state_topic': _settings!.getStateTopic('l1l2_charges'),
+        'availability_topic': _settings!.getAvailabilityTopic(),
+        'icon': 'mdi:ev-plug-type1',
+        'unique_id': '${_settings!.clientId}_l1l2_charges',
+        'device': deviceInfo,
+      };
+
+      // Quick charge count sensor
+      final quickChargesConfig = {
+        'name': 'Nissan Leaf Quick Charges',
+        'state_class': 'total_increasing',
+        'state_topic': _settings!.getStateTopic('quick_charges'),
+        'availability_topic': _settings!.getAvailabilityTopic(),
+        'icon': 'mdi:ev-station',
+        'unique_id': '${_settings!.clientId}_quick_charges',
+        'device': deviceInfo,
+      };
+
       // Publish all configurations
       await publish(_settings!.getDiscoveryTopic('sensor', 'soc'), jsonEncode(socConfig),
           retain: true);
@@ -378,6 +473,19 @@ class MqttClient {
       await publish(_settings!.getDiscoveryTopic('sensor', 'capacity'), jsonEncode(capacityConfig),
           retain: true);
       await publish(_settings!.getDiscoveryTopic('sensor', 'range'), jsonEncode(rangeConfig),
+          retain: true);
+      await publish(_settings!.getDiscoveryTopic('sensor', 'speed'), jsonEncode(speedConfig),
+          retain: true);
+      await publish(_settings!.getDiscoveryTopic('sensor', 'odometer'), jsonEncode(odometerConfig),
+          retain: true);
+      await publish(_settings!.getDiscoveryTopic('sensor', 'ambient_temp'),
+          jsonEncode(ambientTempConfig),
+          retain: true);
+      await publish(_settings!.getDiscoveryTopic('sensor', 'l1l2_charges'),
+          jsonEncode(l1l2ChargesConfig),
+          retain: true);
+      await publish(_settings!.getDiscoveryTopic('sensor', 'quick_charges'),
+          jsonEncode(quickChargesConfig),
           retain: true);
 
       _log.info('Published Home Assistant discovery configuration');

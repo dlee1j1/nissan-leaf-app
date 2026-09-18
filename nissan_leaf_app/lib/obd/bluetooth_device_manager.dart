@@ -439,15 +439,13 @@ class BluetoothDeviceManager {
         return null;
       }
 
-      // TEMPORARY (data-pipeline plan, Phase A): speed/odometer/ambientTemp/
-      // l1l2Charges/quickCharges reads purely to verify their decode
-      // formulas against the real car - never persisted to Reading/the
-      // DB/MQTT (see DirectOBDOrchestrator).
-      // Best-effort and non-fatal: a failure here must never break the
-      // primary lbc/range collection above. Remove once Phase A is done and
-      // either these are wired in for real (Phase B) or the formulas are
-      // found wanting.
-      final verificationData = <String, dynamic>{};
+      // speed/odometer/ambientTemp/l1l2Charges/quickCharges - decode
+      // formulas confirmed against the real car in the data-pipeline plan's
+      // Phase A. Best-effort and non-fatal, unlike lbc/rangeRemaining above:
+      // these are supplementary analytics fields, not core battery data, so
+      // one PID not answering promptly shouldn't cost the whole cycle (and
+      // thus the SOC reading anyone actually depends on).
+      final extraData = <String, dynamic>{};
       for (final cmd in [
         OBDCommand.speed,
         OBDCommand.odometer,
@@ -456,9 +454,9 @@ class BluetoothDeviceManager {
         OBDCommand.quickCharges,
       ]) {
         try {
-          verificationData.addAll(await cmd.run());
+          extraData.addAll(await cmd.run());
         } catch (e) {
-          _log.warning('Verification command ${cmd.name} failed: $e');
+          _log.warning('Extra command ${cmd.name} failed: $e');
         }
       }
 
@@ -466,7 +464,7 @@ class BluetoothDeviceManager {
       return {
         ...batteryData,
         ...rangeData,
-        ...verificationData,
+        ...extraData,
         'timestamp': DateTime.now().millisecondsSinceEpoch,
       };
     } catch (e) {

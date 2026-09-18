@@ -7,6 +7,16 @@ class Reading {
   final double batteryCapacity;
   final double estimatedRange;
 
+  // Analytics fields (data-pipeline plan, Phase B) - nullable because older
+  // rows predate them, and the OBD reads themselves are best-effort (see
+  // BluetoothDeviceManager.collectCarData()), so a given reading may be
+  // missing some or all of them even going forward.
+  final double? speed;
+  final int? odometer;
+  final double? ambientTemp;
+  final int? l1l2Charges;
+  final int? quickCharges;
+
   Reading({
     this.id,
     required this.timestamp,
@@ -15,6 +25,11 @@ class Reading {
     required this.batteryVoltage,
     required this.batteryCapacity,
     required this.estimatedRange,
+    this.speed,
+    this.odometer,
+    this.ambientTemp,
+    this.l1l2Charges,
+    this.quickCharges,
   });
 
   // Convert a Reading to a Map for database storage
@@ -27,6 +42,11 @@ class Reading {
       'batteryVoltage': batteryVoltage,
       'batteryCapacity': batteryCapacity,
       'estimatedRange': estimatedRange,
+      'speed': speed,
+      'odometer': odometer,
+      'ambientTemp': ambientTemp,
+      'l1l2Charges': l1l2Charges,
+      'quickCharges': quickCharges,
     };
   }
 
@@ -40,6 +60,11 @@ class Reading {
       batteryVoltage: map['batteryVoltage'] ?? 0.0,
       batteryCapacity: map['batteryCapacity'] ?? 0.0,
       estimatedRange: map['estimatedRange'] ?? 0.0,
+      speed: (map['speed'] as num?)?.toDouble(),
+      odometer: (map['odometer'] as num?)?.toInt(),
+      ambientTemp: (map['ambientTemp'] as num?)?.toDouble(),
+      l1l2Charges: (map['l1l2Charges'] as num?)?.toInt(),
+      quickCharges: (map['quickCharges'] as num?)?.toInt(),
     );
   }
 
@@ -63,6 +88,11 @@ class Reading {
       batteryVoltage: (odbData['hv_battery_voltage'] as num?)?.toDouble() ?? 0.0,
       batteryCapacity: (odbData['hv_battery_Ah'] as num?)?.toDouble() ?? 0.0,
       estimatedRange: (odbData['range_remaining'] as num?)?.toDouble() ?? 0.0,
+      speed: (odbData['speed'] as num?)?.toDouble(),
+      odometer: (odbData['odometer'] as num?)?.toInt(),
+      ambientTemp: (odbData['ambient_temp'] as num?)?.toDouble(),
+      l1l2Charges: (odbData['l1_l2_charges'] as num?)?.toInt(),
+      quickCharges: (odbData['quick_charges'] as num?)?.toInt(),
     );
   }
 
@@ -75,6 +105,11 @@ class Reading {
     double? batteryVoltage,
     double? batteryCapacity,
     double? estimatedRange,
+    double? speed,
+    int? odometer,
+    double? ambientTemp,
+    int? l1l2Charges,
+    int? quickCharges,
   }) {
     return Reading(
       id: id ?? this.id,
@@ -84,6 +119,11 @@ class Reading {
       batteryVoltage: batteryVoltage ?? this.batteryVoltage,
       batteryCapacity: batteryCapacity ?? this.batteryCapacity,
       estimatedRange: estimatedRange ?? this.estimatedRange,
+      speed: speed ?? this.speed,
+      odometer: odometer ?? this.odometer,
+      ambientTemp: ambientTemp ?? this.ambientTemp,
+      l1l2Charges: l1l2Charges ?? this.l1l2Charges,
+      quickCharges: quickCharges ?? this.quickCharges,
     );
   }
 }

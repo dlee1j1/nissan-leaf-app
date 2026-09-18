@@ -161,9 +161,6 @@ class BackgroundService extends TaskHandler implements DataOrchestrator {
   bool get isConnected => _orchestrator.isConnected;
 
   @override
-  Map<String, dynamic>? get lastVerificationData => _orchestrator.lastVerificationData;
-
-  @override
   Future<void> refreshStatus() async {} // isConnected is already live here
 
   @override
@@ -361,15 +358,8 @@ class BackgroundService extends TaskHandler implements DataOrchestrator {
         // its own had nothing telling a dashboard that happens to be open
         // right now that new data exists, so it just sat there stale until
         // the next explicit ask. A safe no-op if nothing's listening (see
-        // the class doc on _sendToMain). Carries lastVerificationData too
-        // when present (TEMPORARY, Phase A - see DataOrchestrator doc) since
-        // that data only ever exists in-memory on this isolate and would
-        // otherwise never reach the UI at all.
-        _sendToMain({
-          'type': 'newReading',
-          if (_orchestrator.lastVerificationData != null)
-            'verification': _orchestrator.lastVerificationData,
-        });
+        // the class doc on _sendToMain).
+        _sendToMain({'type': 'newReading'});
       } else if (++_consecutiveFailures >= maxConsecutiveFailures) {
         _log.info('$_consecutiveFailures collections failed in a row - stopping (probably parked)');
         _stopRequested = true;

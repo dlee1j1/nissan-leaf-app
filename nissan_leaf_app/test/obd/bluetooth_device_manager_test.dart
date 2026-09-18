@@ -580,14 +580,13 @@ void main() {
     });
   });
 
-  // TEMPORARY (data-pipeline plan, Phase A) - remove this group along with
-  // the verification reads in collectCarData() once Phase A is done.
-  group('Verification commands (Phase A, temporary)', () {
+  group('Extra analytics commands (speed/odometer/ambientTemp/charge counts)', () {
     tearDown(() {
       OBDCommand.setTestRunOverride(null);
     });
 
-    test('collectCarData merges speed/odometer/ambientTemp into the result', () async {
+    test('collectCarData merges speed/odometer/ambientTemp/charge counts into the result',
+        () async {
       bluetoothHelper.setupBluetoothOn();
       bluetoothHelper.setupSuccessfulScan([mockScanResult]);
       bluetoothHelper.setupSuccessfulConnection(mockDevice);
@@ -598,6 +597,8 @@ void main() {
         if (cmd == OBDCommand.speed) return {'speed': 42.0};
         if (cmd == OBDCommand.odometer) return {'odometer': 12345};
         if (cmd == OBDCommand.ambientTemp) return {'ambient_temp': 21.5};
+        if (cmd == OBDCommand.l1l2Charges) return {'l1_l2_charges': 587};
+        if (cmd == OBDCommand.quickCharges) return {'quick_charges': 11};
         return {'raw_response': 'ok'}; // e.g. probe - must be non-empty to connect
       });
 
@@ -607,11 +608,13 @@ void main() {
       expect(result!['speed'], 42.0);
       expect(result['odometer'], 12345);
       expect(result['ambient_temp'], 21.5);
+      expect(result['l1_l2_charges'], 587);
+      expect(result['quick_charges'], 11);
       // The primary fields must not get displaced by the extra reads.
       expect(result['state_of_charge'], 80);
     });
 
-    test('a failing verification command does not break the primary collection', () async {
+    test('a failing extra command does not break the primary collection', () async {
       bluetoothHelper.setupBluetoothOn();
       bluetoothHelper.setupSuccessfulScan([mockScanResult]);
       bluetoothHelper.setupSuccessfulConnection(mockDevice);

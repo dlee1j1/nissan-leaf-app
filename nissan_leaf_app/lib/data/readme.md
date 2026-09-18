@@ -27,7 +27,12 @@ Defines the `Reading` class that represents a single data point of battery infor
 - `batteryHealth`: Battery health percentage (0-100%)
 - `batteryVoltage`: High-voltage battery voltage (volts)
 - `batteryCapacity`: High-voltage battery capacity (Ah)
-- `estimatedRange`: Estimated driving range (km)
+- `estimatedRange`: Estimated driving range (km) - known unreliable, see below
+- `speed`, `odometer`, `ambientTemp`, `l1l2Charges`, `quickCharges`: nullable
+  analytics fields. Nullable because the OBD reads behind them are
+  best-effort (`BluetoothDeviceManager.collectCarData()`), so a given
+  reading may be missing some or all of them even on current app versions,
+  not just on rows written before they existed.
 
 The model provides several factory methods:
 - `Reading.fromMap()`: Create from a database record
@@ -96,9 +101,30 @@ CREATE TABLE readings(
   batteryHealth REAL NOT NULL,
   batteryVoltage REAL NOT NULL,
   batteryCapacity REAL NOT NULL,
-  estimatedRange REAL NOT NULL
+  estimatedRange REAL NOT NULL,
+  speed REAL,
+  odometer INTEGER,
+  ambientTemp REAL,
+  l1l2Charges INTEGER,
+  quickCharges INTEGER
 )
 ```
+
+The five analytics columns were added in schema version 2 via `onUpgrade`
+in `readings_db.dart` - see "Extending the Data Model" below for the
+pattern, now exercised for real rather than just described.
+
+### Known-unreliable field: `estimatedRange`
+
+`range_remaining` (OBD PID `03220e24`, header `743`) decodes exactly per
+the byte-level reference used to validate the rest of this data (see
+`obd_command.dart`'s `_RangeRemainingCommand`), but real captures show its
+response is frozen byte-for-byte across sessions with meaningfully
+different SOC, even mid-drive. Not a wrong-offset bug - more likely this
+PID isn't actually a live "current remaining range" signal despite how the
+reference doc labels it. Left as-is (not fixed, not worked around) until
+that gets a real answer; the dash's own range display is the reliable
+source until then.
 
 ## Session Management
 
@@ -121,6 +147,12 @@ If you need to add new metrics to track:
 2. Update the `toMap()` and factory methods to include the new field
 3. Modify the database schema in `readings_db.dart`
 4. Add migration code if needed for existing databases
+
+The speed/odometer/ambientTemp/l1l2Charges/quickCharges fields (schema
+version 2) are a real, checked-in example of this whole pattern end to
+end - `reading_model.dart`, `readings_db.dart`'s `_upgradeDb()`, and
+`test/data/readings_db_test.dart`'s migration test are all worth reading
+alongside this walkthrough.
 
 Example for adding a battery temperature field:
 

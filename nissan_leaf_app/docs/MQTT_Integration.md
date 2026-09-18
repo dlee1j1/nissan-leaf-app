@@ -105,6 +105,11 @@ homeassistant/sensor/[clientId]/health/config
 homeassistant/sensor/[clientId]/voltage/config
 homeassistant/sensor/[clientId]/capacity/config
 homeassistant/sensor/[clientId]/range/config
+homeassistant/sensor/[clientId]/speed/config
+homeassistant/sensor/[clientId]/odometer/config
+homeassistant/sensor/[clientId]/ambient_temp/config
+homeassistant/sensor/[clientId]/l1l2_charges/config
+homeassistant/sensor/[clientId]/quick_charges/config
 ```
 
 These messages define:
@@ -146,8 +151,21 @@ The MQTT client publishes to several topics:
    [topicPrefix]/[clientId]/health/state           // Battery health
    [topicPrefix]/[clientId]/voltage/state          // Battery voltage
    [topicPrefix]/[clientId]/capacity/state         // Battery capacity
-   [topicPrefix]/[clientId]/range/state            // Estimated range
+   [topicPrefix]/[clientId]/range/state            // Estimated range (unreliable - see note below)
+   [topicPrefix]/[clientId]/speed/state            // Vehicle speed, km/h
+   [topicPrefix]/[clientId]/odometer/state         // Total odometer, km
+   [topicPrefix]/[clientId]/ambient_temp/state     // Ambient temperature, °C
+   [topicPrefix]/[clientId]/l1l2_charges/state     // Lifetime L1/L2 charge count
+   [topicPrefix]/[clientId]/quick_charges/state    // Lifetime DC quick-charge count
    ```
+   The last seven topics only publish when that cycle's OBD read succeeded -
+   the reads behind them are best-effort, unlike SOC/health/voltage/capacity.
+
+   `range/state` is a known-unreliable field: its raw OBD response decodes
+   correctly by the same byte-level reference validated for the others, but
+   real captures show it frozen regardless of actual SOC or driving. Treat
+   it as unfixed rather than trustworthy until that gets root-caused - see
+   `nissan_leaf_app/lib/data/readme.md`.
 
 2. **Availability Topic**: Device online status
    ```

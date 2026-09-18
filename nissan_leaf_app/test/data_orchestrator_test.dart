@@ -113,63 +113,6 @@ void main() {
       });
     });
 
-    // TEMPORARY (data-pipeline plan, Phase A) - remove alongside
-    // lastVerificationData once Phase A verification is done.
-    group('lastVerificationData (Phase A, temporary)', () {
-      test('picks out speed/odometer/ambient_temp when present in the raw OBD map', () async {
-        final carData = {
-          'state_of_charge': 85,
-          'hv_battery_health': 90,
-          'hv_battery_voltage': 360,
-          'hv_battery_Ah': 56,
-          'range_remaining': 150,
-          'speed': 42.0,
-          'odometer': 12345,
-          'ambient_temp': 21.5,
-          'timestamp': DateTime.now().millisecondsSinceEpoch,
-        };
-
-        when(() => mockDeviceManager.initialize()).thenAnswer((_) async {});
-        when(() => mockDeviceManager.isConnected).thenReturn(false);
-        when(() => mockDeviceManager.autoConnectToObd()).thenAnswer((_) async => true);
-        when(() => mockDeviceManager.collectCarData()).thenAnswer((_) async => carData);
-        when(() => mockDatabase.insertReading(any())).thenAnswer((_) async => 1);
-        when(() => mockMqttClient.isConnected).thenReturn(false);
-
-        expect(orchestrator.lastVerificationData, isNull);
-
-        await orchestrator.collectData();
-
-        expect(orchestrator.lastVerificationData, {
-          'speed': 42.0,
-          'odometer': 12345,
-          'ambient_temp': 21.5,
-        });
-      });
-
-      test('is null when none of the verification keys are present', () async {
-        final carData = {
-          'state_of_charge': 85,
-          'hv_battery_health': 90,
-          'hv_battery_voltage': 360,
-          'hv_battery_Ah': 56,
-          'range_remaining': 150,
-          'timestamp': DateTime.now().millisecondsSinceEpoch,
-        };
-
-        when(() => mockDeviceManager.initialize()).thenAnswer((_) async {});
-        when(() => mockDeviceManager.isConnected).thenReturn(false);
-        when(() => mockDeviceManager.autoConnectToObd()).thenAnswer((_) async => true);
-        when(() => mockDeviceManager.collectCarData()).thenAnswer((_) async => carData);
-        when(() => mockDatabase.insertReading(any())).thenAnswer((_) async => 1);
-        when(() => mockMqttClient.isConnected).thenReturn(false);
-
-        await orchestrator.collectData();
-
-        expect(orchestrator.lastVerificationData, isNull);
-      });
-    });
-
     test('_getOrCreateSessionId creates new session after 30+ minutes', () async {
       // Setup shared prefs with an old session
       final oldTime = DateTime.now().subtract(const Duration(minutes: 40));

@@ -79,12 +79,6 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   bool _isLoadingHistory = false;
   String? _errorMessage;
 
-  // TEMPORARY (data-pipeline plan, Phase A): raw speed/odometer/ambientTemp
-  // from the background service's lastVerificationData, shown only to spot
-  // check their OBD decode formulas against the real car. Not persisted,
-  // not part of Reading - remove once Phase A verification is done.
-  Map<String, dynamic>? _verificationData;
-
   // Whether the real background service is currently running - not the
   // same thing as whether the dongle is connected. The dashboard never
   // holds its own BluetoothDeviceManager (see #20), so it can't observe
@@ -118,12 +112,6 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   // gets torn down and rebuilt on every mode switch.
   void _onBackgroundServiceData(Object data) {
     if (data is! Map || data['type'] != 'newReading') return;
-    // TEMPORARY (data-pipeline plan, Phase A): see DataOrchestrator
-    // .lastVerificationData. Not every newReading push carries this.
-    final verification = data['verification'];
-    if (verification is Map && mounted) {
-      setState(() => _verificationData = Map<String, dynamic>.from(verification));
-    }
     _refreshCurrentReadingFromDb();
   }
 
@@ -397,50 +385,6 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     }
   }
 
-  // TEMPORARY (data-pipeline plan, Phase A) - see _verificationData. Not
-  // meant to look permanent: plain amber "under test" styling rather than
-  // matching the polished cards around it.
-  Widget _buildVerificationCard(Map<String, dynamic> data) {
-    final speed = data['speed'];
-    final odometer = data['odometer'];
-    final ambientTemp = data['ambient_temp'];
-    final l1l2Charges = data['l1_l2_charges'];
-    final quickCharges = data['quick_charges'];
-    final rangeRawLength = data['range_remaining_raw_length'];
-    final rangeRawBytes = data['range_remaining_raw_bytes'];
-    final rangeCandidateMiles = data['range_remaining_candidate_miles'];
-    return Card(
-      color: Colors.amber[50],
-      child: Padding(
-        padding: const EdgeInsets.all(12.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Verification (temporary - Phase A)',
-              style: TextStyle(fontWeight: FontWeight.bold, color: Colors.amber[900]),
-            ),
-            const SizedBox(height: 4),
-            Text('Speed: ${speed ?? '--'} km/h  '
-                'Odometer: ${odometer ?? '--'} km  '
-                'Ambient: ${ambientTemp ?? '--'}°C'),
-            const SizedBox(height: 4),
-            Text('L1/L2 charges: ${l1l2Charges ?? '--'}  '
-                'Quick charges: ${quickCharges ?? '--'}'),
-            if (rangeRawLength != null) ...[
-              const SizedBox(height: 4),
-              Text('Range response: $rangeRawLength bytes -> $rangeRawBytes'),
-            ],
-            if (rangeCandidateMiles != null) ...[
-              const SizedBox(height: 4),
-              Text('Range candidate (unconfirmed): $rangeCandidateMiles mi - compare to dash'),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-
   // Error message card builder
   Widget _buildErrorMessage(String message) {
     return Card(
@@ -637,12 +581,6 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                 isLoading: _isLoadingCurrent,
                 onRefresh: _refreshCurrentReading,
               ),
-
-              // TEMPORARY (data-pipeline plan, Phase A) - remove once
-              // verification is done. Updates roughly once per collection
-              // cycle (background service interval, default 1 min) - not a
-              // live speedometer, just a periodic sanity check.
-              if (_verificationData != null) _buildVerificationCard(_verificationData!),
 
               const SizedBox(height: 16),
 
