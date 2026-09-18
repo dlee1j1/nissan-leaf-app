@@ -431,7 +431,8 @@ class BluetoothDeviceManager {
     // the receiver could someday act on (it doesn't yet - see #13).
     try {
       final batteryData = await OBDCommand.lbc.run();
-      final rangeData = await OBDCommand.rangeRemaining.run();
+      // No rangeRemaining call any more - see the "REMOVED" note above
+      // OBDCommand.extractInt in obd_command.dart.
 
       if (batteryData.isEmpty) {
         _lastErrorMessage = 'OBD device returned no battery data';
@@ -439,8 +440,33 @@ class BluetoothDeviceManager {
         return null;
       }
 
+      // speed/odometer/ambientTemp/l1l2Charges/quickCharges - decode
+      // formulas confirmed against the real car in the data-pipeline plan's
+      // Phase A. Best-effort and non-fatal, unlike lbc above: these are
+      // supplementary analytics fields, not core battery data, so one PID
+      // not answering promptly shouldn't cost the whole cycle (and thus
+      // the SOC reading anyone actually depends on).
+      final extraData = <String, dynamic>{};
+      for (final cmd in [
+        OBDCommand.speed,
+        OBDCommand.odometer,
+        OBDCommand.ambientTemp,
+        OBDCommand.l1l2Charges,
+        OBDCommand.quickCharges,
+      ]) {
+        try {
+          extraData.addAll(await cmd.run());
+        } catch (e) {
+          _log.warning('Extra command ${cmd.name} failed: $e');
+        }
+      }
+
       _lastErrorMessage = null; // this cycle succeeded - stay connected
-      return {...batteryData, ...rangeData, 'timestamp': DateTime.now().millisecondsSinceEpoch};
+      return {
+        ...batteryData,
+        ...extraData,
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      };
     } catch (e) {
       _lastErrorMessage = 'Error collecting data: $e';
       _log.severe('Error collecting data: $e');

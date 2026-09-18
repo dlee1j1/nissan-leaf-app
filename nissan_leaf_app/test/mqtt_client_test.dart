@@ -49,54 +49,59 @@ void main() {
       expect(identical(instance1, instance2), isTrue);
     });
 
-    test('initializes with settings', () async {
-      await mqttClient.initialize(settings);
+    test('testConnection reports error without throwing when settings are invalid', () async {
+      final invalidSettings = MqttSettings(broker: ''); // isValid() == false
 
-      expect(mqttClient.settings, isNotNull);
-      expect(mqttClient.settings?.broker, equals('test.mosquitto.org'));
-      expect(mqttClient.settings?.port, equals(1883));
+      final connected = await mqttClient.testConnection(invalidSettings);
+
+      expect(connected, isFalse);
+      expect(mqttClient.currentStatus, app.MqttConnectionStatus.error);
     });
-/*
-    test('generates correct status updates', () async {
-      // Create a stream subscription to test status updates
-      bool receivedUpdate = false;
-      final subscription = mqttClient.connectionStatus.listen((status) {
-        receivedUpdate = true;
-      });
 
-      // Initialize with settings (should trigger status update)
-      await mqttClient.initialize(settings);
-
-      expect(receivedUpdate, isTrue);
-
-      // Clean up
-      subscription.cancel();
+    test('reset() reports disconnected', () {
+      mqttClient.reset();
+      expect(mqttClient.currentStatus, app.MqttConnectionStatus.disconnected);
     });
-*/
+
+    // The following don't actually reach a real broker (this test file has
+    // no way to mock the underlying MqttServerClient), so they only verify
+    // the one-shot connect/publish/disconnect path doesn't throw when
+    // settings are otherwise well-formed - each call takes its own
+    // `settings` argument now rather than relying on a cached field.
     test('correctly formats battery data for publishing', () async {
-      await mqttClient.initialize(settings);
-
       final testData = {
         'stateOfCharge': 75.5,
         'batteryHealth': 92.0,
         'batteryVoltage': 364.5,
         'batteryCapacity': 56.0,
-        'estimatedRange': 150.0,
         'sessionId': 'test_session'
       };
 
-      // This test doesn't actually publish data since we can't mock the MQTT client well
-      // But we can verify our method doesn't throw an exception when formatting the data
-
-      // This should not throw an exception
       expect(
           () => mqttClient.publishBatteryData(
+                settings: settings,
                 stateOfCharge: testData['stateOfCharge'] as double,
                 batteryHealth: testData['batteryHealth'] as double,
                 batteryVoltage: testData['batteryVoltage'] as double,
                 batteryCapacity: testData['batteryCapacity'] as double,
-                estimatedRange: testData['estimatedRange'] as double,
                 sessionId: testData['sessionId'] as String,
+              ),
+          returnsNormally);
+    });
+
+    test('correctly formats battery data including analytics fields (Phase B)', () async {
+      expect(
+          () => mqttClient.publishBatteryData(
+                settings: settings,
+                stateOfCharge: 75.5,
+                batteryHealth: 92.0,
+                batteryVoltage: 364.5,
+                batteryCapacity: 56.0,
+                speed: 42.0,
+                odometer: 41400,
+                ambientTemp: 21.5,
+                l1l2Charges: 588,
+                quickCharges: 11,
               ),
           returnsNormally);
     });

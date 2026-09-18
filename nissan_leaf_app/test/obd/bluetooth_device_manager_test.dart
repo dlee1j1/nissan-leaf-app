@@ -579,4 +579,60 @@ void main() {
       verify(() => bluetoothHelper.mock.connectToDevice(mockDevice)).called(1);
     });
   });
+
+  group('Extra analytics commands (speed/odometer/ambientTemp/charge counts)', () {
+    tearDown(() {
+      OBDCommand.setTestRunOverride(null);
+    });
+
+    test('collectCarData merges speed/odometer/ambientTemp/charge counts into the result',
+        () async {
+      bluetoothHelper.setupBluetoothOn();
+      bluetoothHelper.setupSuccessfulScan([mockScanResult]);
+      bluetoothHelper.setupSuccessfulConnection(mockDevice);
+      bluetoothHelper.setupSuccessfulServiceDiscovery(mockDevice, [mockService]);
+
+      OBDCommand.setTestRunOverride((cmd) async {
+        if (cmd == OBDCommand.lbc) return {'state_of_charge': 80};
+        if (cmd == OBDCommand.speed) return {'speed': 42.0};
+        if (cmd == OBDCommand.odometer) return {'odometer': 12345};
+        if (cmd == OBDCommand.ambientTemp) return {'ambient_temp': 21.5};
+        if (cmd == OBDCommand.l1l2Charges) return {'l1_l2_charges': 587};
+        if (cmd == OBDCommand.quickCharges) return {'quick_charges': 11};
+        return {'raw_response': 'ok'}; // e.g. probe - must be non-empty to connect
+      });
+
+      final result = await manager.collectCarData();
+
+      expect(result, isNotNull);
+      expect(result!['speed'], 42.0);
+      expect(result['odometer'], 12345);
+      expect(result['ambient_temp'], 21.5);
+      expect(result['l1_l2_charges'], 587);
+      expect(result['quick_charges'], 11);
+      // The primary fields must not get displaced by the extra reads.
+      expect(result['state_of_charge'], 80);
+    });
+
+    test('a failing extra command does not break the primary collection', () async {
+      bluetoothHelper.setupBluetoothOn();
+      bluetoothHelper.setupSuccessfulScan([mockScanResult]);
+      bluetoothHelper.setupSuccessfulConnection(mockDevice);
+      bluetoothHelper.setupSuccessfulServiceDiscovery(mockDevice, [mockService]);
+
+      OBDCommand.setTestRunOverride((cmd) async {
+        if (cmd == OBDCommand.lbc) return {'state_of_charge': 80};
+        if (cmd == OBDCommand.speed) throw Exception('no response');
+        if (cmd == OBDCommand.odometer) return {'odometer': 12345};
+        return {'raw_response': 'ok'}; // e.g. probe - must be non-empty to connect
+      });
+
+      final result = await manager.collectCarData();
+
+      expect(result, isNotNull);
+      expect(result!['state_of_charge'], 80);
+      expect(result['odometer'], 12345);
+      expect(result.containsKey('speed'), false);
+    });
+  });
 }

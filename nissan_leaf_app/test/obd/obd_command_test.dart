@@ -106,6 +106,34 @@ void main() {
             'odometer': 123456,
           }));
     });
+
+    // The following decode tests use the exact worked-example response
+    // bytes from ze1_polling.pdf ("Nissan Leaf 2018" UDS PID reference, via
+    // dalathegreat/leaf_can_bus_messages) - not synthetic data - since
+    // Phase A of the data-pipeline plan cross-checked these formulas
+    // against that doc rather than deriving them fresh. The doc's leading
+    // length byte is dropped, matching CANProtocolHandler's convention
+    // (data[0] = the 0x62 positive-response byte).
+    test('Speed decode matches the documented worked example', () {
+      final testData = [0x62, 0x12, 0x1A, 0x00, 0x01, 0x00, 0x00];
+      expect(OBDCommand.speed.decode(testData), equals({'speed': 0.1}));
+    });
+
+    test('Quick charges decode matches the documented worked example', () {
+      final testData = [0x62, 0x12, 0x03, 0x00, 0x01, 0x00, 0x00];
+      expect(OBDCommand.quickCharges.decode(testData), equals({'quick_charges': 1}));
+    });
+
+    test('L1/L2 charges decode matches the documented worked example', () {
+      final testData = [0x62, 0x12, 0x05, 0x00, 0x73, 0x00, 0x00];
+      expect(OBDCommand.l1l2Charges.decode(testData), equals({'l1_l2_charges': 115}));
+    });
+
+    test('Ambient temp decode matches the documented worked example (24°C)', () {
+      final testData = [0x62, 0x11, 0x5D, 0x81, 0x00, 0x00, 0x00];
+      final result = OBDCommand.ambientTemp.decode(testData);
+      expect(result['ambient_temp'], closeTo(24.0, 0.001));
+    });
     test('LBC Command handles multi-frame response end-to-end', () async {
       // Multi-frame response following ISO-TP format
       // First frame (0x10) indicates total length

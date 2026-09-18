@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../mqtt_client.dart';
@@ -20,6 +21,7 @@ class _MqttSettingsWidgetState extends State<MqttSettingsWidget> {
   final _topicPrefixController = TextEditingController();
 
   bool _isEnabled = false;
+  bool _useWebSocket = false;
   bool _isPasswordVisible = false;
   bool _isTesting = false;
   String _connectionStatus = 'Disconnected';
@@ -30,6 +32,11 @@ class _MqttSettingsWidgetState extends State<MqttSettingsWidget> {
   final _mqttClient = MqttClient.instance;
   final _mqttSettings = MqttSettings();
 
+  // MqttClient.instance is a singleton that outlives this widget - without
+  // cancelling this in dispose(), its connectionStatus stream keeps firing
+  // setState on an unmounted State after the page closes.
+  StreamSubscription<MqttConnectionStatus>? _connectionStatusSubscription;
+
   @override
   void initState() {
     super.initState();
@@ -38,11 +45,15 @@ class _MqttSettingsWidgetState extends State<MqttSettingsWidget> {
   }
 
   void _setupConnectionListener() {
-    final mqttClient = MqttClient.instance;
-    _connectionStatus = mqttClient.isConnected ? 'Connected' : 'Disconnected';
-    _isConnected = mqttClient.isConnected;
+    // Reflects the outcome of the last connect/publish attempt (this
+    // screen's own Test Connection, or a real background cycle) - not a
+    // live socket. See MqttConnectionStatus's doc: there's no persistent
+    // session any more to report on.
+    _connectionStatus = _mqttClient.isConnected ? 'Connected' : 'Disconnected';
+    _isConnected = _mqttClient.isConnected;
 
-    _mqttClient.connectionStatus.listen((status) {
+    _connectionStatusSubscription = _mqttClient.connectionStatus.listen((status) {
+      if (!mounted) return;
       setState(() {
         switch (status) {
           case MqttConnectionStatus.disconnected:
@@ -78,15 +89,8 @@ class _MqttSettingsWidgetState extends State<MqttSettingsWidget> {
       _topicPrefixController.text = _mqttSettings.topicPrefix;
       _qosValue = _mqttSettings.qos;
       _isEnabled = _mqttSettings.enabled;
+      _useWebSocket = _mqttSettings.useWebSocket;
     });
-
-    // Get initial connection status
-    if (_mqttClient.settings != null) {
-      setState(() {
-        _isConnected = _mqttClient.isConnected;
-        _connectionStatus = _mqttClient.isConnected ? 'Connected' : 'Disconnected';
-      });
-    }
   }
 
   Future<void> _saveSettings() async {
@@ -110,6 +114,7 @@ class _MqttSettingsWidgetState extends State<MqttSettingsWidget> {
     _mqttSettings.topicPrefix = topicPrefix;
     _mqttSettings.qos = _qosValue;
     _mqttSettings.enabled = _isEnabled;
+    _mqttSettings.useWebSocket = _useWebSocket;
 
     // Save password if provided
     if (password.isNotEmpty) {
@@ -119,11 +124,12 @@ class _MqttSettingsWidgetState extends State<MqttSettingsWidget> {
     // Save settings
     await _mqttSettings.saveSettings();
 
-    // Initialize MQTT client with new settings
-    if (_isEnabled && _mqttSettings.isValid()) {
-      await _mqttClient.initialize(_mqttSettings);
-    } else if (!_isEnabled && _mqttClient.isConnected) {
-      await _mqttClient.disconnect();
+    // Nothing to eagerly connect - there's no persistent session for
+    // saving to prime any more. The next real collection cycle (or another
+    // Test Connection) picks up these settings fresh on its own. Just stop
+    // claiming a stale "connected" if the feature just got turned off.
+    if (!_isEnabled) {
+      _mqttClient.reset();
     }
 
     // Show confirmation
@@ -151,6 +157,7 @@ class _MqttSettingsWidgetState extends State<MqttSettingsWidget> {
     _mqttSettings.clientId = _clientIdController.text.trim();
     _mqttSettings.topicPrefix = _topicPrefixController.text.trim();
     _mqttSettings.qos = _qosValue;
+    _mqttSettings.useWebSocket = _useWebSocket;
 
     // Update password if provided
     final password = _passwordController.text;
@@ -158,8 +165,10 @@ class _MqttSettingsWidgetState extends State<MqttSettingsWidget> {
       await _mqttSettings.setPassword(password);
     }
 
-    // Test connection
-    final connected = await _mqttClient.connect();
+    // Test with exactly what's in the form right now - testConnection()
+    // takes settings as a parameter rather than reading a cached field, so
+    // there's no way for this to end up testing something stale.
+    final connected = await _mqttClient.testConnection(_mqttSettings);
 
     setState(() {
       _isTesting = false;
@@ -189,6 +198,7 @@ class _MqttSettingsWidgetState extends State<MqttSettingsWidget> {
                   children: [
                     Text(_isEnabled ? 'Enabled' : 'Disabled'),
                     Switch(
+                      key: const Key('mqtt_enabled_switch'),
                       value: _isEnabled,
                       onChanged: (value) {
                         setState(() {
@@ -267,6 +277,24 @@ class _MqttSettingsWidgetState extends State<MqttSettingsWidget> {
                   return 'Enter a valid port number (1-65535)';
                 }
                 return null;
+              },
+            ),
+            const SizedBox(height: 12),
+
+            // WebSocket transport
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Use WebSocket (wss://)'),
+              subtitle: const Text(
+                'For brokers only reachable via WebSocket, e.g. behind '
+                'Cloudflare - it forwards WebSocket upgrades but not raw '
+                'MQTT. Port is typically 443.',
+              ),
+              value: _useWebSocket,
+              onChanged: (value) {
+                setState(() {
+                  _useWebSocket = value;
+                });
               },
             ),
             const SizedBox(height: 12),
@@ -411,6 +439,7 @@ class _MqttSettingsWidgetState extends State<MqttSettingsWidget> {
 
   @override
   void dispose() {
+    _connectionStatusSubscription?.cancel();
     _brokerController.dispose();
     _portController.dispose();
     _usernameController.dispose();

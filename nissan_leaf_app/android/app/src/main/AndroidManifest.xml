@@ -1,5 +1,13 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
+    <!-- Needed for MQTT (and anything else non-Bluetooth the app talks to
+         over the network) - without it, socket-level DNS lookups and
+         connections fail for this app specifically even though the device's
+         DNS/network otherwise works fine, which is exactly what made this
+         one hard to diagnose: no plugin dependency happened to pull it in
+         via manifest merge, and nothing needed it until MQTT did. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
     <uses-permission android:name="android.permission.BLUETOOTH"/>
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN"/>
     <!-- neverForLocation: we scan only to find the OBD dongle / the car, never

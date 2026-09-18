@@ -7,6 +7,7 @@ import 'package:nissan_leaf_app/obd/bluetooth_device_manager.dart';
 import 'package:nissan_leaf_app/data/readings_db.dart';
 import 'package:nissan_leaf_app/data/reading_model.dart';
 import 'package:nissan_leaf_app/mqtt_client.dart';
+import 'package:nissan_leaf_app/mqtt_settings.dart';
 import 'package:nissan_leaf_app/obd/obd_command.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:nissan_leaf_app/obd/obd_connector.dart';
@@ -58,6 +59,7 @@ void main() {
       estimatedRange: 0,
     ));
     registerFallbackValue(false); // For disconnectAfter parameter
+    registerFallbackValue(MqttSettings());
   });
 
   group('DataOrchestrator', () {
@@ -260,14 +262,18 @@ void main() {
       when(() => mockDeviceManager.collectCarData()).thenAnswer((_) async => carData);
       when(() => mockDatabase.insertReading(any())).thenAnswer((_) async => 1);
 
-      // Mock MQTT client is connected
-      when(() => mockMqttClient.isConnected).thenReturn(true);
+      // One-shot model: MqttClient.isConnected isn't consulted any more:
+      // DirectOBDOrchestrator loads MqttSettings fresh every cycle and
+      // publishes whenever it's enabled and valid, regardless of any
+      // prior connection state (there isn't one to check).
+      SharedPreferences.setMockInitialValues(
+          {'mqtt_enabled': true, 'mqtt_broker': 'test.broker.com'});
       when(() => mockMqttClient.publishBatteryData(
+            settings: any(named: 'settings'),
             stateOfCharge: any(named: 'stateOfCharge'),
             batteryHealth: any(named: 'batteryHealth'),
             batteryVoltage: any(named: 'batteryVoltage'),
             batteryCapacity: any(named: 'batteryCapacity'),
-            estimatedRange: any(named: 'estimatedRange'),
             sessionId: any(named: 'sessionId'),
           )).thenAnswer((_) async => true);
 
@@ -279,11 +285,11 @@ void main() {
 
       // Verify MQTT publish was called
       verify(() => mockMqttClient.publishBatteryData(
+            settings: any(named: 'settings'),
             stateOfCharge: any(named: 'stateOfCharge'),
             batteryHealth: any(named: 'batteryHealth'),
             batteryVoltage: any(named: 'batteryVoltage'),
             batteryCapacity: any(named: 'batteryCapacity'),
-            estimatedRange: any(named: 'estimatedRange'),
             sessionId: any(named: 'sessionId'),
           )).called(1);
     });
@@ -305,14 +311,16 @@ void main() {
       when(() => mockDeviceManager.collectCarData()).thenAnswer((_) async => carData);
       when(() => mockDatabase.insertReading(any())).thenAnswer((_) async => 1);
 
-      // Mock MQTT client is connected but publishing throws an error
-      when(() => mockMqttClient.isConnected).thenReturn(true);
+      // MQTT enabled and valid (one-shot model - see the test above), but
+      // publishing itself throws.
+      SharedPreferences.setMockInitialValues(
+          {'mqtt_enabled': true, 'mqtt_broker': 'test.broker.com'});
       when(() => mockMqttClient.publishBatteryData(
+            settings: any(named: 'settings'),
             stateOfCharge: any(named: 'stateOfCharge'),
             batteryHealth: any(named: 'batteryHealth'),
             batteryVoltage: any(named: 'batteryVoltage'),
             batteryCapacity: any(named: 'batteryCapacity'),
-            estimatedRange: any(named: 'estimatedRange'),
             sessionId: any(named: 'sessionId'),
           )).thenThrow(Exception('MQTT publish error'));
 
@@ -324,11 +332,11 @@ void main() {
 
       // Verify MQTT publish was attempted
       verify(() => mockMqttClient.publishBatteryData(
+            settings: any(named: 'settings'),
             stateOfCharge: any(named: 'stateOfCharge'),
             batteryHealth: any(named: 'batteryHealth'),
             batteryVoltage: any(named: 'batteryVoltage'),
             batteryCapacity: any(named: 'batteryCapacity'),
-            estimatedRange: any(named: 'estimatedRange'),
             sessionId: any(named: 'sessionId'),
           )).called(1);
     });

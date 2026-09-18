@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nissan_leaf_app/data/reading_model.dart';
 import 'package:nissan_leaf_app/data/readings_db.dart';
@@ -238,6 +239,78 @@ void main() {
         () => ReadingsDatabase(databasePath: 'new_path.db'),
         throwsA(isA<StateError>()),
       );
+    });
+
+    // Data-pipeline plan, Phase B: v1 -> v2 migration adding the analytics
+    // columns. Needs a real file (not inMemoryDatabasePath) so it can be
+    // closed after creating it at v1 and reopened at v2 to actually
+    // exercise onUpgrade, the way a real app update would.
+    test('v1 -> v2 migration adds analytics columns without losing existing rows', () async {
+      final tempDir = await Directory.systemTemp.createTemp('readings_db_migration_test');
+      final dbPath = '${tempDir.path}/readings.db';
+
+      try {
+        // Create a v1 database by hand, matching the original schema
+        // exactly (no analytics columns), and insert a row under it.
+        final v1Db = await databaseFactory.openDatabase(
+          dbPath,
+          options: OpenDatabaseOptions(
+            version: 1,
+            onCreate: (db, version) => db.execute('''
+              CREATE TABLE readings(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp INTEGER NOT NULL,
+                stateOfCharge REAL NOT NULL,
+                batteryHealth REAL NOT NULL,
+                batteryVoltage REAL NOT NULL,
+                batteryCapacity REAL NOT NULL,
+                estimatedRange REAL NOT NULL
+              )
+            '''),
+          ),
+        );
+        final preMigrationTimestamp = DateTime.now().millisecondsSinceEpoch;
+        await v1Db.insert('readings', {
+          'timestamp': preMigrationTimestamp,
+          'stateOfCharge': 80.0,
+          'batteryHealth': 90.0,
+          'batteryVoltage': 360.0,
+          'batteryCapacity': 56.0,
+          'estimatedRange': 150.0,
+        });
+        await v1Db.close();
+
+        // Reopen through the real app path - triggers onUpgrade to v2.
+        await ReadingsDatabase.reset();
+        final migratedDb = ReadingsDatabase(databasePath: dbPath);
+        await migratedDb.database;
+
+        // The pre-migration row survives, with nulls for the new columns.
+        final all = await migratedDb.getReadingsFromLastDays(1);
+        expect(all.length, 1);
+        expect(all.first.stateOfCharge, 80.0);
+        expect(all.first.speed, isNull);
+        expect(all.first.odometer, isNull);
+
+        // A fresh insert can now populate the new columns.
+        await migratedDb.insertReading(Reading(
+          timestamp: DateTime.now(),
+          stateOfCharge: 82.0,
+          batteryHealth: 90.0,
+          batteryVoltage: 360.0,
+          batteryCapacity: 56.0,
+          estimatedRange: 155.0,
+          speed: 42.0,
+          odometer: 41400,
+        ));
+
+        final afterInsert = await migratedDb.getMostRecentReading();
+        expect(afterInsert!.speed, 42.0);
+        expect(afterInsert.odometer, 41400);
+      } finally {
+        await ReadingsDatabase.reset();
+        await tempDir.delete(recursive: true);
+      }
     });
   });
 }
