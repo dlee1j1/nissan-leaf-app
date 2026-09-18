@@ -19,6 +19,7 @@ class MqttSettings {
   static const String _topicPrefixKey = 'mqtt_topic_prefix';
   static const String _qosKey = 'mqtt_qos';
   static const String _enabledKey = 'mqtt_enabled';
+  static const String _useWebSocketKey = 'mqtt_use_websocket';
 
   // Secure storage key for password
   static const String _passwordKey = 'mqtt_password';
@@ -31,6 +32,12 @@ class MqttSettings {
   String topicPrefix;
   int qos;
   bool enabled;
+  // Connect via secure WebSocket (wss://broker) instead of raw TCP. Needed
+  // for brokers only reachable behind a reverse proxy that terminates TLS
+  // and speaks HTTP(S)/WebSocket upgrades - e.g. Cloudflare's standard
+  // proxy, which forwards WebSocket connections fine but not raw TCP MQTT
+  // on 1883/8883. Port still applies (443 for a typical wss:// setup).
+  bool useWebSocket;
 
   // Secure storage instance
   final EncryptedSharedPreferences _secureStorage = EncryptedSharedPreferences();
@@ -44,6 +51,7 @@ class MqttSettings {
     this.topicPrefix = 'nissan_leaf',
     this.qos = defaultQos,
     this.enabled = false,
+    this.useWebSocket = false,
   });
 
   /// Validate settings
@@ -105,6 +113,7 @@ class MqttSettings {
       await prefs.setString(_topicPrefixKey, topicPrefix);
       await prefs.setInt(_qosKey, qos);
       await prefs.setBool(_enabledKey, enabled);
+      await prefs.setBool(_useWebSocketKey, useWebSocket);
 
       _log.info('MQTT settings saved');
     } catch (e) {
@@ -125,6 +134,7 @@ class MqttSettings {
       topicPrefix = prefs.getString(_topicPrefixKey) ?? 'nissan_leaf';
       qos = prefs.getInt(_qosKey) ?? defaultQos;
       enabled = prefs.getBool(_enabledKey) ?? false;
+      useWebSocket = prefs.getBool(_useWebSocketKey) ?? false;
 
       _log.info('MQTT settings loaded');
     } catch (e) {
@@ -143,6 +153,7 @@ class MqttSettings {
       'topicPrefix': topicPrefix,
       'qos': qos,
       'enabled': enabled,
+      'useWebSocket': useWebSocket,
     };
   }
 
@@ -156,6 +167,7 @@ class MqttSettings {
       topicPrefix: json['topicPrefix'] ?? 'nissan_leaf',
       qos: json['qos'] ?? defaultQos,
       enabled: json['enabled'] ?? false,
+      useWebSocket: json['useWebSocket'] ?? false,
     );
   }
 

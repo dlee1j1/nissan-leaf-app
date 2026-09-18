@@ -104,8 +104,16 @@ class MqttClient {
     _updateStatus(MqttConnectionStatus.connecting);
 
     try {
-      // Create MQTT client
-      _client = MqttServerClient(_settings!.broker, _settings!.clientId);
+      // Create MQTT client. useWebSocket needs a full "wss://host" URI, not
+      // a bare hostname (see MqttServerWsConnection.connect in the
+      // mqtt_client package) - raw TCP mode wants just the hostname.
+      // Needed for brokers only reachable via WebSocket, e.g. behind a
+      // reverse proxy like Cloudflare's standard proxy, which forwards
+      // WebSocket upgrades but not raw TCP MQTT on 1883/8883.
+      final server =
+          _settings!.useWebSocket ? 'wss://${_settings!.broker}' : _settings!.broker;
+      _client = MqttServerClient(server, _settings!.clientId);
+      _client!.useWebSocket = _settings!.useWebSocket;
 
       // Set up client options
       _client!.port = _settings!.port;
@@ -116,8 +124,10 @@ class MqttClient {
       _client!.onAutoReconnect = _onAutoReconnect;
       _client!.onSubscribed = _onSubscribed;
 
-      // Set secure connection if using port 8883
-      if (_settings!.port == 8883) {
+      // Set secure connection if using port 8883. Irrelevant in WebSocket
+      // mode - the package ignores `secure` there and takes TLS-or-not
+      // purely from the wss:// scheme above.
+      if (!_settings!.useWebSocket && _settings!.port == 8883) {
         _client!.secure = true;
       }
 

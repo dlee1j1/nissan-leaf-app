@@ -20,6 +20,7 @@ class _MqttSettingsWidgetState extends State<MqttSettingsWidget> {
   final _topicPrefixController = TextEditingController();
 
   bool _isEnabled = false;
+  bool _useWebSocket = false;
   bool _isPasswordVisible = false;
   bool _isTesting = false;
   String _connectionStatus = 'Disconnected';
@@ -78,6 +79,7 @@ class _MqttSettingsWidgetState extends State<MqttSettingsWidget> {
       _topicPrefixController.text = _mqttSettings.topicPrefix;
       _qosValue = _mqttSettings.qos;
       _isEnabled = _mqttSettings.enabled;
+      _useWebSocket = _mqttSettings.useWebSocket;
     });
 
     // Get initial connection status
@@ -110,6 +112,7 @@ class _MqttSettingsWidgetState extends State<MqttSettingsWidget> {
     _mqttSettings.topicPrefix = topicPrefix;
     _mqttSettings.qos = _qosValue;
     _mqttSettings.enabled = _isEnabled;
+    _mqttSettings.useWebSocket = _useWebSocket;
 
     // Save password if provided
     if (password.isNotEmpty) {
@@ -151,6 +154,7 @@ class _MqttSettingsWidgetState extends State<MqttSettingsWidget> {
     _mqttSettings.clientId = _clientIdController.text.trim();
     _mqttSettings.topicPrefix = _topicPrefixController.text.trim();
     _mqttSettings.qos = _qosValue;
+    _mqttSettings.useWebSocket = _useWebSocket;
 
     // Update password if provided
     final password = _passwordController.text;
@@ -189,6 +193,7 @@ class _MqttSettingsWidgetState extends State<MqttSettingsWidget> {
                   children: [
                     Text(_isEnabled ? 'Enabled' : 'Disabled'),
                     Switch(
+                      key: const Key('mqtt_enabled_switch'),
                       value: _isEnabled,
                       onChanged: (value) {
                         setState(() {
@@ -267,6 +272,24 @@ class _MqttSettingsWidgetState extends State<MqttSettingsWidget> {
                   return 'Enter a valid port number (1-65535)';
                 }
                 return null;
+              },
+            ),
+            const SizedBox(height: 12),
+
+            // WebSocket transport
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Use WebSocket (wss://)'),
+              subtitle: const Text(
+                'For brokers only reachable via WebSocket, e.g. behind '
+                'Cloudflare - it forwards WebSocket upgrades but not raw '
+                'MQTT. Port is typically 443.',
+              ),
+              value: _useWebSocket,
+              onChanged: (value) {
+                setState(() {
+                  _useWebSocket = value;
+                });
               },
             ),
             const SizedBox(height: 12),

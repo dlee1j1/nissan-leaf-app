@@ -146,8 +146,9 @@ void main() {
       // Initially disabled
       expect(find.text('Disabled'), findsOneWidget);
 
-      // Find the switch and tap it
-      final switchWidget = find.byType(Switch);
+      // Find the enable/disable switch specifically - there's more than one
+      // Switch on this form now (the WebSocket toggle added its own).
+      final switchWidget = find.byKey(const Key('mqtt_enabled_switch'));
       await tester.tap(switchWidget);
       await tester.pumpAndSettle();
 
@@ -172,7 +173,10 @@ void main() {
       // Initially QoS 0
       expect(find.text('At most once (0)'), findsOneWidget);
 
-      // Find the dropdown and tap it
+      // Find the dropdown and tap it - scroll it into view first, the form
+      // is taller than the test viewport now that it has an extra toggle.
+      await tester.ensureVisible(find.text('At most once (0)'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('At most once (0)'));
       await tester.pumpAndSettle();
 

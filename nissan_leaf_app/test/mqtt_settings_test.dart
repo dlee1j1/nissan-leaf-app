@@ -21,6 +21,7 @@ void main() {
       expect(settings.topicPrefix, equals('nissan_leaf'));
       expect(settings.qos, equals(0));
       expect(settings.enabled, equals(false));
+      expect(settings.useWebSocket, equals(false));
     });
 
     test('isValid returns true only when broker is set', () {
@@ -41,6 +42,7 @@ void main() {
       settings.topicPrefix = 'test/topic';
       settings.qos = 1;
       settings.enabled = true;
+      settings.useWebSocket = true;
 
       final json = settings.toJson();
       final deserialized = MqttSettings.fromJson(json);
@@ -52,6 +54,7 @@ void main() {
       expect(deserialized.topicPrefix, equals('test/topic'));
       expect(deserialized.qos, equals(1));
       expect(deserialized.enabled, equals(true));
+      expect(deserialized.useWebSocket, equals(true));
     });
 
     test('generates correct Home Assistant topics', () {

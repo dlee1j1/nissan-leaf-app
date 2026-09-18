@@ -196,6 +196,16 @@ The client includes:
 - Network connectivity checks
 - Keep-alive mechanism (5-minute refresh)
 
+### WebSocket transport
+
+By default the client connects via raw TCP. If your broker is only
+reachable behind a reverse proxy that terminates TLS and speaks HTTP(S) -
+e.g. Cloudflare's standard proxy, which forwards WebSocket upgrades but
+not raw TCP MQTT on 1883/8883 - enable **Use WebSocket (wss://)** in MQTT
+Settings. This connects via `wss://<broker>` on the configured port
+(typically 443) instead. `MqttSettings.useWebSocket` / `mqtt_use_websocket`
+is the underlying flag (`mqtt_settings.dart`, `mqtt_client.dart`).
+
 ## Security
 
 To ensure secure communication:
