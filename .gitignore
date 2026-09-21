@@ -60,3 +60,10 @@ reference/
 # touch files
 .test_timestamp
 .docker-build-stamp
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
+.beads/proxieddb/
+*.gate.lock*

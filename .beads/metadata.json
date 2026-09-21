@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "leaf",
+  "project_id": "d90e14f9-255e-4d8f-9ae0-1ac94d339658"
+}
