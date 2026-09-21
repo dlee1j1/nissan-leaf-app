@@ -39,6 +39,17 @@ abstract class DataOrchestrator {
   /// Best-effort refresh of [isConnected] without running a real collection
   /// cycle. A no-op for orchestrators where [isConnected] is already live.
   Future<void> refreshStatus();
+
+  /// Outcome of the most recent MQTT publish attempt made *during* the last
+  /// [collectData] cycle, or null if that cycle didn't attempt one (MQTT
+  /// disabled, or this orchestrator doesn't touch MQTT itself). Surfaced
+  /// into the background service's heartbeat log alongside [lastFailureReason]
+  /// - MQTT publish failures are caught and don't affect [collectData]'s own
+  /// return value (a broker outage isn't a reason to stop collecting/storing
+  /// readings), so without this a fully-broken MQTT publish looks identical,
+  /// after the fact, to a healthy one. See the "connects but nothing shows
+  /// up in Home Assistant" report this was added to diagnose.
+  String? get lastMqttStatus;
 }
 
 /// Orchestrator that connects directly to OBD (Debug Mode)
@@ -49,6 +60,7 @@ class DirectOBDOrchestrator implements DataOrchestrator {
   final MqttClient _mqttClient;
   final _log = SimpleLogger();
   var _initialized = false;
+  String? _lastMqttStatus;
 
   Future<void> _initialize() async {
     if (_initialized) return;
@@ -77,6 +89,9 @@ class DirectOBDOrchestrator implements DataOrchestrator {
 
   @override
   Future<void> refreshStatus() async {} // isConnected is already live
+
+  @override
+  String? get lastMqttStatus => _lastMqttStatus;
 
   final SingleFlight<bool> _collectGuard = SingleFlight<bool>();
   @override
@@ -108,15 +123,25 @@ class DirectOBDOrchestrator implements DataOrchestrator {
       // Generate a unique session ID
       final sessionId = await _getOrCreateSessionId();
 
+      _lastMqttStatus = null;
       try {
         // Load settings fresh every cycle - one-shot connect/publish/
         // disconnect (see MqttClient's class doc), so there's no cached
         // client to go stale if settings changed since the last cycle.
         final mqttSettings = MqttSettings();
         await mqttSettings.loadSettings();
-        if (mqttSettings.enabled && mqttSettings.isValid()) {
+        if (!mqttSettings.enabled) {
+          _lastMqttStatus = 'disabled';
+        } else if (!mqttSettings.isValid()) {
+          // Silent no-op otherwise: enabled=true but isValid()==false (e.g.
+          // an empty broker address slipped into storage) would look exactly
+          // like a successful cycle with nothing published - this is the
+          // one line that tells the two apart.
+          _lastMqttStatus = 'skipped (invalid settings: broker address is empty)';
+          _log.warning('MQTT enabled but settings invalid - skipping publish');
+        } else {
           _log.info('Publishing to MQTT');
-          await _mqttClient.publishBatteryData(
+          final published = await _mqttClient.publishBatteryData(
             settings: mqttSettings,
             stateOfCharge: reading.stateOfCharge,
             batteryHealth: reading.batteryHealth,
@@ -129,9 +154,12 @@ class DirectOBDOrchestrator implements DataOrchestrator {
             l1l2Charges: reading.l1l2Charges,
             quickCharges: reading.quickCharges,
           );
+          _lastMqttStatus =
+              published ? 'ok' : 'failed: ${_mqttClient.lastError ?? "unknown error"}';
         }
       } catch (e) {
         // swallow any exceptions, it's not critical
+        _lastMqttStatus = 'failed: $e';
         _log.warning('MQTT publish failed: $e');
       }
 
@@ -254,6 +282,12 @@ class BackgroundServiceOrchestrator implements DataOrchestrator {
 
   @override
   bool get isConnected => _connected;
+
+  // This orchestrator never touches MQTT itself - it asks the real
+  // background isolate's DirectOBDOrchestrator to collect, and that isolate
+  // does its own heartbeat logging directly. Nothing to report here.
+  @override
+  String? get lastMqttStatus => null;
 
   @override
   Future<void> refreshStatus() async {
@@ -416,6 +450,9 @@ class MockDataOrchestrator implements DataOrchestrator {
 
   @override
   bool get isConnected => true; // mock mode has no real dongle to be connected to
+
+  @override
+  String? get lastMqttStatus => null; // mock data collection never touches MQTT
 
   @override
   Future<void> refreshStatus() async {}

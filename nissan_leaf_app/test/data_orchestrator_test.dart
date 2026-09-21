@@ -294,6 +294,134 @@ void main() {
           )).called(1);
     });
 
+    test('lastMqttStatus reports ok after a successful publish', () async {
+      final carData = {
+        'state_of_charge': 85,
+        'hv_battery_health': 90,
+        'hv_battery_voltage': 360,
+        'hv_battery_Ah': 56,
+        'range_remaining': 150,
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      };
+
+      when(() => mockDeviceManager.initialize()).thenAnswer((_) async {});
+      when(() => mockDeviceManager.isConnected).thenReturn(false);
+      when(() => mockDeviceManager.autoConnectToObd()).thenAnswer((_) async => true);
+      when(() => mockDeviceManager.collectCarData()).thenAnswer((_) async => carData);
+      when(() => mockDatabase.insertReading(any())).thenAnswer((_) async => 1);
+
+      SharedPreferences.setMockInitialValues(
+          {'mqtt_enabled': true, 'mqtt_broker': 'test.broker.com'});
+      when(() => mockMqttClient.publishBatteryData(
+            settings: any(named: 'settings'),
+            stateOfCharge: any(named: 'stateOfCharge'),
+            batteryHealth: any(named: 'batteryHealth'),
+            batteryVoltage: any(named: 'batteryVoltage'),
+            batteryCapacity: any(named: 'batteryCapacity'),
+            sessionId: any(named: 'sessionId'),
+          )).thenAnswer((_) async => true);
+
+      await orchestrator.collectData();
+
+      expect(orchestrator.lastMqttStatus, 'ok');
+    });
+
+    test('lastMqttStatus reports disabled when MQTT is turned off', () async {
+      final carData = {
+        'state_of_charge': 85,
+        'hv_battery_health': 90,
+        'hv_battery_voltage': 360,
+        'hv_battery_Ah': 56,
+        'range_remaining': 150,
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      };
+
+      when(() => mockDeviceManager.initialize()).thenAnswer((_) async {});
+      when(() => mockDeviceManager.isConnected).thenReturn(false);
+      when(() => mockDeviceManager.autoConnectToObd()).thenAnswer((_) async => true);
+      when(() => mockDeviceManager.collectCarData()).thenAnswer((_) async => carData);
+      when(() => mockDatabase.insertReading(any())).thenAnswer((_) async => 1);
+
+      SharedPreferences.setMockInitialValues({'mqtt_enabled': false});
+
+      await orchestrator.collectData();
+
+      expect(orchestrator.lastMqttStatus, 'disabled');
+      verifyNever(() => mockMqttClient.publishBatteryData(
+            settings: any(named: 'settings'),
+            stateOfCharge: any(named: 'stateOfCharge'),
+            batteryHealth: any(named: 'batteryHealth'),
+            batteryVoltage: any(named: 'batteryVoltage'),
+            batteryCapacity: any(named: 'batteryCapacity'),
+            sessionId: any(named: 'sessionId'),
+          ));
+    });
+
+    test('lastMqttStatus reports skipped when enabled but settings are invalid', () async {
+      final carData = {
+        'state_of_charge': 85,
+        'hv_battery_health': 90,
+        'hv_battery_voltage': 360,
+        'hv_battery_Ah': 56,
+        'range_remaining': 150,
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      };
+
+      when(() => mockDeviceManager.initialize()).thenAnswer((_) async {});
+      when(() => mockDeviceManager.isConnected).thenReturn(false);
+      when(() => mockDeviceManager.autoConnectToObd()).thenAnswer((_) async => true);
+      when(() => mockDeviceManager.collectCarData()).thenAnswer((_) async => carData);
+      when(() => mockDatabase.insertReading(any())).thenAnswer((_) async => 1);
+
+      // Enabled, but no broker address saved - isValid() == false.
+      SharedPreferences.setMockInitialValues({'mqtt_enabled': true});
+
+      await orchestrator.collectData();
+
+      expect(orchestrator.lastMqttStatus, contains('skipped'));
+      verifyNever(() => mockMqttClient.publishBatteryData(
+            settings: any(named: 'settings'),
+            stateOfCharge: any(named: 'stateOfCharge'),
+            batteryHealth: any(named: 'batteryHealth'),
+            batteryVoltage: any(named: 'batteryVoltage'),
+            batteryCapacity: any(named: 'batteryCapacity'),
+            sessionId: any(named: 'sessionId'),
+          ));
+    });
+
+    test('lastMqttStatus reports the failure reason when publishing fails', () async {
+      final carData = {
+        'state_of_charge': 85,
+        'hv_battery_health': 90,
+        'hv_battery_voltage': 360,
+        'hv_battery_Ah': 56,
+        'range_remaining': 150,
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      };
+
+      when(() => mockDeviceManager.initialize()).thenAnswer((_) async {});
+      when(() => mockDeviceManager.isConnected).thenReturn(false);
+      when(() => mockDeviceManager.autoConnectToObd()).thenAnswer((_) async => true);
+      when(() => mockDeviceManager.collectCarData()).thenAnswer((_) async => carData);
+      when(() => mockDatabase.insertReading(any())).thenAnswer((_) async => 1);
+
+      SharedPreferences.setMockInitialValues(
+          {'mqtt_enabled': true, 'mqtt_broker': 'test.broker.com'});
+      when(() => mockMqttClient.publishBatteryData(
+            settings: any(named: 'settings'),
+            stateOfCharge: any(named: 'stateOfCharge'),
+            batteryHealth: any(named: 'batteryHealth'),
+            batteryVoltage: any(named: 'batteryVoltage'),
+            batteryCapacity: any(named: 'batteryCapacity'),
+            sessionId: any(named: 'sessionId'),
+          )).thenAnswer((_) async => false);
+      when(() => mockMqttClient.lastError).thenReturn('Connection failed: returnCode=notAuthorized');
+
+      await orchestrator.collectData();
+
+      expect(orchestrator.lastMqttStatus, contains('notAuthorized'));
+    });
+
     test('MQTT publishing errors are caught and do not stop collection', () async {
       // Mock response data
       final carData = {
@@ -329,6 +457,10 @@ void main() {
 
       // Collection should still succeed despite MQTT error
       expect(result, isTrue);
+
+      // ...but lastMqttStatus is what makes that failure visible after the
+      // fact, instead of looking identical to a healthy publish.
+      expect(orchestrator.lastMqttStatus, contains('MQTT publish error'));
 
       // Verify MQTT publish was attempted
       verify(() => mockMqttClient.publishBatteryData(

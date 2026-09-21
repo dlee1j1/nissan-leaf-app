@@ -53,6 +53,15 @@ class MqttClient {
 
   final _log = SimpleLogger();
 
+  /// Detail behind the most recent [MqttConnectionStatus.error] (or the most
+  /// recent publish's partial-failure summary) - the enum alone can't say
+  /// *why*, and that "why" is what's missing from every report so far of
+  /// "it connects but nothing shows up in HA". Cleared to null at the start
+  /// of every connect attempt; set from whichever branch below actually
+  /// fails, so it always reflects the most recent attempt, not a stale one.
+  String? _lastError;
+  String? get lastError => _lastError;
+
   Stream<MqttConnectionStatus> get connectionStatus => _connectionStatusController.stream;
   MqttConnectionStatus get currentStatus => _connectionStatus;
   bool get isConnected => _connectionStatus == MqttConnectionStatus.connected;
@@ -133,35 +142,54 @@ class MqttClient {
       if (l1l2Charges != null) data['l1l2_charges'] = l1l2Charges;
       if (quickCharges != null) data['quick_charges'] = quickCharges;
 
-      _publish(client, settings, settings.getStateTopic('soc'), stateOfCharge.toString());
-      _publish(client, settings, settings.getStateTopic('health'), batteryHealth.toString());
-      _publish(client, settings, settings.getStateTopic('voltage'), batteryVoltage.toString());
-      _publish(client, settings, settings.getStateTopic('capacity'), batteryCapacity.toString());
+      // Individual publishes are best-effort (one bad topic shouldn't lose
+      // the rest), but every failure lands here - collected rather than
+      // silently swallowed, so a partial failure is visible instead of
+      // looking identical to full success.
+      final failedTopics = <String>[];
+
+      _publish(client, settings, settings.getStateTopic('soc'), stateOfCharge.toString(),
+          failedTopics);
+      _publish(client, settings, settings.getStateTopic('health'), batteryHealth.toString(),
+          failedTopics);
+      _publish(client, settings, settings.getStateTopic('voltage'), batteryVoltage.toString(),
+          failedTopics);
+      _publish(client, settings, settings.getStateTopic('capacity'), batteryCapacity.toString(),
+          failedTopics);
       if (speed != null) {
-        _publish(client, settings, settings.getStateTopic('speed'), speed.toString());
+        _publish(client, settings, settings.getStateTopic('speed'), speed.toString(), failedTopics);
       }
       if (odometer != null) {
-        _publish(client, settings, settings.getStateTopic('odometer'), odometer.toString());
+        _publish(
+            client, settings, settings.getStateTopic('odometer'), odometer.toString(), failedTopics);
       }
       if (ambientTemp != null) {
-        _publish(client, settings, settings.getStateTopic('ambient_temp'), ambientTemp.toString());
+        _publish(client, settings, settings.getStateTopic('ambient_temp'), ambientTemp.toString(),
+            failedTopics);
       }
       if (l1l2Charges != null) {
-        _publish(client, settings, settings.getStateTopic('l1l2_charges'), l1l2Charges.toString());
+        _publish(client, settings, settings.getStateTopic('l1l2_charges'), l1l2Charges.toString(),
+            failedTopics);
       }
       if (quickCharges != null) {
-        _publish(
-            client, settings, settings.getStateTopic('quick_charges'), quickCharges.toString());
+        _publish(client, settings, settings.getStateTopic('quick_charges'),
+            quickCharges.toString(), failedTopics);
       }
 
       final fullDataTopic = '${settings.topicPrefix}/${settings.clientId}/data';
-      _publish(client, settings, fullDataTopic, jsonEncode(data));
+      _publish(client, settings, fullDataTopic, jsonEncode(data), failedTopics);
 
-      _publishDiscoveryConfig(client, settings);
+      _publishDiscoveryConfig(client, settings, failedTopics);
 
+      if (failedTopics.isNotEmpty) {
+        _lastError = 'Failed to publish ${failedTopics.length} topic(s): ${failedTopics.join(', ')}';
+        _log.warning(_lastError!);
+        return false;
+      }
       return true;
     } catch (e) {
-      _log.warning('Error publishing battery data: $e');
+      _lastError = 'Error publishing battery data: $e';
+      _log.warning(_lastError!);
       return false;
     } finally {
       _disconnectOnce(client);
@@ -174,15 +202,19 @@ class MqttClient {
   /// own failure paths - there is no auto-reconnect or lingering session
   /// to clean up later.
   Future<MqttServerClient?> _connectOnce(MqttSettings settings) async {
+    _lastError = null;
+
     if (!settings.isValid()) {
-      _log.warning('Cannot connect: Invalid or missing MQTT settings');
+      _lastError = 'Invalid or missing MQTT settings (broker address is empty)';
+      _log.warning(_lastError!);
       _updateStatus(MqttConnectionStatus.error);
       return null;
     }
 
     final connectivityResults = await _connectivity.checkConnectivity();
     if (!connectivityResults.any((result) => result != ConnectivityResult.none)) {
-      _log.warning('Cannot connect: No network connectivity');
+      _lastError = 'No network connectivity';
+      _log.warning(_lastError!);
       _updateStatus(MqttConnectionStatus.error);
       return null;
     }
@@ -243,12 +275,19 @@ class MqttClient {
         _updateStatus(MqttConnectionStatus.connected);
         return client;
       } else {
-        _log.warning('Connection failed: ${client.connectionStatus?.returnCode}');
+        // The broker's own return code (e.g. notAuthorized, badUsernamePassword,
+        // identifierRejected) is the difference between "network is fine but
+        // the broker rejected us" and every other failure mode - worth
+        // capturing verbatim rather than just logging it and losing it.
+        _lastError = 'Connection failed: state=${client.connectionStatus?.state}, '
+            'returnCode=${client.connectionStatus?.returnCode}';
+        _log.warning(_lastError!);
         _updateStatus(MqttConnectionStatus.error);
         return null;
       }
     } catch (e) {
-      _log.severe('Exception during MQTT connection: $e');
+      _lastError = 'Exception during MQTT connection: $e';
+      _log.severe(_lastError!);
       _updateStatus(MqttConnectionStatus.error);
       return null;
     }
@@ -267,13 +306,15 @@ class MqttClient {
     }
   }
 
-  void _publish(MqttServerClient client, MqttSettings settings, String topic, String message) {
+  void _publish(MqttServerClient client, MqttSettings settings, String topic, String message,
+      List<String> failedTopics) {
     try {
       final builder = MqttClientPayloadBuilder();
       builder.addString(message);
       client.publishMessage(topic, _getQosLevel(settings), builder.payload!, retain: true);
     } catch (e) {
       _log.warning('Error publishing to $topic: $e');
+      failedTopics.add(topic);
     }
   }
 
@@ -287,7 +328,8 @@ class MqttClient {
   /// cycle doesn't flap a sensor to unavailable and back.
   static const int _expireAfterSeconds = 180;
 
-  void _publishDiscoveryConfig(MqttServerClient client, MqttSettings settings) {
+  void _publishDiscoveryConfig(
+      MqttServerClient client, MqttSettings settings, List<String> failedTopics) {
     try {
       final deviceInfo = {
         'identifiers': [settings.clientId],
@@ -367,7 +409,7 @@ class MqttClient {
           'device': deviceInfo,
         };
         _publish(client, settings, settings.getDiscoveryTopic('sensor', entry.key),
-            jsonEncode(config));
+            jsonEncode(config), failedTopics);
       }
 
       _log.info('Published Home Assistant discovery configuration');

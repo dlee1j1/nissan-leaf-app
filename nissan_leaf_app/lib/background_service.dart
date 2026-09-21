@@ -161,6 +161,9 @@ class BackgroundService extends TaskHandler implements DataOrchestrator {
   bool get isConnected => _orchestrator.isConnected;
 
   @override
+  String? get lastMqttStatus => _orchestrator.lastMqttStatus;
+
+  @override
   Future<void> refreshStatus() async {} // isConnected is already live here
 
   @override
@@ -346,6 +349,14 @@ class BackgroundService extends TaskHandler implements DataOrchestrator {
         // Distinguishes e.g. "scan came back empty because of a platform
         // scan-throttle error" from "genuinely nothing in range" - see #3.
         note += ' reason=${_orchestrator.lastFailureReason}';
+      }
+      if (_orchestrator.lastMqttStatus != null) {
+        // Independent of collection success: a broker outage is caught and
+        // doesn't fail the cycle (data is still saved locally), so without
+        // this the heartbeat log shows a clean run of successes even if
+        // every single MQTT publish failed - indistinguishable, after a
+        // drive, from MQTT working fine. See lastMqttStatus's doc.
+        note += ' mqtt=${_orchestrator.lastMqttStatus}';
       }
       unawaited(_appendHeartbeat(note));
 

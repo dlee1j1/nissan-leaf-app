@@ -56,6 +56,30 @@ void main() {
 
       expect(connected, isFalse);
       expect(mqttClient.currentStatus, app.MqttConnectionStatus.error);
+      expect(mqttClient.lastError, contains('broker address is empty'));
+    });
+
+    test('lastError reports no network connectivity distinctly from other failures', () async {
+      when(() => mockConnectivity.checkConnectivity())
+          .thenAnswer((_) async => [ConnectivityResult.none]);
+
+      final connected = await mqttClient.testConnection(settings);
+
+      expect(connected, isFalse);
+      expect(mqttClient.lastError, contains('No network connectivity'));
+    });
+
+    test('lastError is cleared by a subsequent successful validity/connectivity check', () async {
+      final invalidSettings = MqttSettings(broker: '');
+      await mqttClient.testConnection(invalidSettings);
+      expect(mqttClient.lastError, isNotNull);
+
+      // A real broker still isn't reachable in this test environment, but
+      // getting past the isValid()/connectivity checks and into the actual
+      // connect attempt should replace the old error, not leave it stale.
+      await mqttClient.testConnection(settings);
+
+      expect(mqttClient.lastError, isNot(contains('broker address is empty')));
     });
 
     test('reset() reports disconnected', () {
