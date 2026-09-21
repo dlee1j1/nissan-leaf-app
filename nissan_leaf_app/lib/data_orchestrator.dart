@@ -101,7 +101,7 @@ class DirectOBDOrchestrator implements DataOrchestrator {
 
   Future<bool> _collectData() async {
     try {
-      _initialize();
+      await _initialize();
       _statusController.add({'collecting': true});
       _log.info('Starting direct OBD data collection');
 

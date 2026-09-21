@@ -422,6 +422,40 @@ void main() {
       expect(orchestrator.lastMqttStatus, contains('notAuthorized'));
     });
 
+    test('waits for initialize() to finish before collecting data (#7)', () async {
+      final carData = {
+        'state_of_charge': 85,
+        'hv_battery_health': 90,
+        'hv_battery_voltage': 360,
+        'hv_battery_Ah': 56,
+        'range_remaining': 150,
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      };
+
+      // initialize() resolves on a later microtask/timer rather than
+      // immediately, so an un-awaited call in _collectData would let
+      // collectCarData() race ahead of it.
+      var initializeComplete = false;
+      when(() => mockDeviceManager.initialize()).thenAnswer((_) async {
+        await Future.delayed(const Duration(milliseconds: 10));
+        initializeComplete = true;
+      });
+      when(() => mockDeviceManager.isConnected).thenReturn(false);
+      when(() => mockDeviceManager.autoConnectToObd()).thenAnswer((_) async => true);
+      when(() => mockDeviceManager.collectCarData()).thenAnswer((_) async {
+        expect(initializeComplete, isTrue,
+            reason: 'collectCarData() ran before initialize() finished');
+        return carData;
+      });
+      when(() => mockDatabase.insertReading(any())).thenAnswer((_) async => 1);
+      when(() => mockMqttClient.isConnected).thenReturn(false);
+
+      final result = await orchestrator.collectData();
+
+      expect(result, isTrue);
+      expect(initializeComplete, isTrue);
+    });
+
     test('MQTT publishing errors are caught and do not stop collection', () async {
       // Mock response data
       final carData = {
