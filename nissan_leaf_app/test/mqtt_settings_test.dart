@@ -77,6 +77,31 @@ void main() {
       );
     });
 
+    test('setEnabledImmediately persists just the enabled flag, not other unsaved fields',
+        () async {
+      // Simulate a broker address typed into the form but never saved -
+      // setEnabledImmediately must not clobber it in storage with whatever
+      // this in-memory object's broker field happens to hold (default '').
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('mqtt_broker', 'already.saved.broker');
+
+      await settings.setEnabledImmediately(true);
+
+      expect(settings.enabled, isTrue);
+      expect(prefs.getBool('mqtt_enabled'), isTrue);
+      expect(prefs.getString('mqtt_broker'), 'already.saved.broker');
+    });
+
+    test('setEnabledImmediately is visible to a fresh MqttSettings that loads settings',
+        () async {
+      await settings.setEnabledImmediately(true);
+
+      final reloaded = MqttSettings();
+      await reloaded.loadSettings();
+
+      expect(reloaded.enabled, isTrue);
+    });
+
     test('should store and retrieve password securely', () async {
       // Define a test password
       const testPassword = 'SecureTestPassword123!';

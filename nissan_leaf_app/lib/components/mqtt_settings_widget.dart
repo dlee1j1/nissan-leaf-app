@@ -204,6 +204,16 @@ class _MqttSettingsWidgetState extends State<MqttSettingsWidget> {
                         setState(() {
                           _isEnabled = value;
                         });
+                        // Persists immediately, unlike the rest of this form -
+                        // see setEnabledImmediately's doc. Without this the
+                        // switch only changed what the screen displayed; the
+                        // actual saved setting (what a real collection cycle
+                        // reads) stayed whatever it was until "Save Settings"
+                        // was also pressed.
+                        unawaited(_mqttSettings.setEnabledImmediately(value));
+                        if (!value) {
+                          _mqttClient.reset();
+                        }
                       },
                       activeThumbColor: Colors.green,
                     ),

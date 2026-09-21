@@ -154,6 +154,12 @@ void main() {
 
       // Should now be enabled
       expect(find.text('Enabled'), findsOneWidget);
+
+      // And persisted immediately - without a "Save Settings" tap - since a
+      // background collection cycle reloads settings from storage on its
+      // own and would otherwise never see this until Save was also pressed.
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getBool('mqtt_enabled'), isTrue);
     });
 
     testWidgets('changes QoS level', (WidgetTester tester) async {

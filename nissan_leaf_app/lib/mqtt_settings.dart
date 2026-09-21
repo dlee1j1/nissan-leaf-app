@@ -107,6 +107,31 @@ class MqttSettings {
     }
   }
 
+  /// Persist just the enabled flag, independent of the rest of the form.
+  ///
+  /// The Settings screen's on/off switch is meant to take effect
+  /// immediately - unlike the switch, the other fields need "Save Settings"
+  /// because there's text mid-edit to validate first, but there's nothing
+  /// to validate here. Writing only this one key (not the full
+  /// [saveSettings]) matters: this object's other fields reflect whatever
+  /// was loaded at screen-open time, and calling the full save here would
+  /// silently overwrite a broker/port/etc. edit the user has typed but not
+  /// yet saved. Without this, flipping the switch only changes what the
+  /// screen displays - the real background collection cycle, which reloads
+  /// settings from storage on every cycle, never sees it and just keeps
+  /// skipping MQTT until "Save Settings" is also pressed.
+  Future<void> setEnabledImmediately(bool value) async {
+    enabled = value;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_enabledKey, value);
+      _log.info('MQTT enabled flag saved: $value');
+    } catch (e) {
+      _log.severe('Error saving MQTT enabled flag: $e');
+      rethrow;
+    }
+  }
+
   /// Save settings to SharedPreferences
   Future<void> saveSettings() async {
     try {
