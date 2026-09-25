@@ -323,10 +323,10 @@ class MqttClient {
   /// no online/offline availability topic any more (that model assumes a
   /// live connection - see the class doc); this is HA's own primitive for
   /// "reports occasionally, not continuously", so it needs no bookkeeping
-  /// on our side. Set generously above the default 1-minute collection
-  /// interval (BackgroundService.defaultFrequency) so an occasional missed
-  /// cycle doesn't flap a sensor to unavailable and back.
-  static const int _expireAfterSeconds = 180;
+  /// on our side. Set to 48 hours: the car only reports while driving, so
+  /// several days of it sitting parked shouldn't flap every sensor to
+  /// unavailable.
+  static const int _expireAfterSeconds = 172800;
 
   void _publishDiscoveryConfig(
       MqttServerClient client, MqttSettings settings, List<String> failedTopics) {
