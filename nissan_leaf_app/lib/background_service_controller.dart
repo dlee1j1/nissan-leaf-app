@@ -40,6 +40,9 @@ class ForegroundTaskWrapper {
     await FlutterForegroundTask.startService(
       notificationTitle: notificationTitle,
       notificationText: notificationText,
+      // Tapping the persistent notification brings the app to the
+      // foreground instead of doing nothing.
+      notificationInitialRoute: '/',
       callback: callback,
     );
   }
