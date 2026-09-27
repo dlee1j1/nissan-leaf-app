@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.ActivityManager
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.bluetooth.BluetoothDevice
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -287,12 +288,23 @@ class ObdConnectionReceiver : BroadcastReceiver() {
                     )
                 )
             }
+            val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)
+                ?.apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP) }
+            val contentIntent = launchIntent?.let {
+                PendingIntent.getActivity(
+                    context,
+                    DEBUG_NOTIFICATION_ID,
+                    it,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+                )
+            }
             val notification = NotificationCompat.Builder(context, DEBUG_NOTIFICATION_CHANNEL)
                 .setSmallIcon(context.applicationInfo.icon)
                 .setContentTitle("Leaf BT trigger fired")
                 .setContentText("$deviceLabel connected; starting drive logging")
                 .setPriority(NotificationCompat.PRIORITY_DEFAULT)
                 .setAutoCancel(true)
+                .setContentIntent(contentIntent)
                 .build()
             manager.notify(DEBUG_NOTIFICATION_ID, notification)
         } catch (e: Exception) {
