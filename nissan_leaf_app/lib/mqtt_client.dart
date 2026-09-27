@@ -309,8 +309,15 @@ class MqttClient {
   void _publish(MqttServerClient client, MqttSettings settings, String topic, String message,
       List<String> failedTopics) {
     try {
+      // Not builder.addString(message): that calls addUTF16String, which
+      // truncates non-ASCII characters to a single raw byte instead of
+      // UTF-8 encoding them (e.g. '°' -> the raw byte 0xB0), which HA's
+      // MQTT client then rejects outright as invalid UTF-8 - silently
+      // dropping just that one discovery config (ambient_temp's '°C' unit)
+      // while every all-ASCII payload publishes fine. addUTF8String avoids
+      // the trap for any future non-ASCII field too.
       final builder = MqttClientPayloadBuilder();
-      builder.addString(message);
+      builder.addUTF8String(message);
       client.publishMessage(topic, _getQosLevel(settings), builder.payload!, retain: true);
     } catch (e) {
       _log.warning('Error publishing to $topic: $e');
