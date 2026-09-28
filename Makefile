@@ -1,4 +1,4 @@
-.PHONY: docker-build docker-shell docker-restart docker-stop docker-adb
+.PHONY: docker-build docker-shell docker-restart docker-stop docker-adb docker-clean
 CONTAINER_NAME=flutter_dev
 
 # Most targets run inside the container so run docker-compose and exec to run make inside if not in the container
@@ -129,6 +129,7 @@ web:  test
 
 clean:
 	cd nissan_leaf_app && flutter clean
+	rm -rf /root/.gradle/*
 
 # Repomix targets that delegate to the repomix subdirectory
 repomix:
@@ -167,3 +168,15 @@ docker-restart: docker-stop docker-shell
 
 docker-stop:
 	docker-compose down
+
+# Deep clean: reclaims everything `make setup` and the docker build produce
+# (Flutter SDK clone, Android SDK, gradle cache, the built image itself) -
+# for parking the project when you won't be building for a while. Recovery
+# is `make docker-build` (or `make setup`) before the next build; expect a
+# slow first build afterward since caches start cold again.
+# `clean` (build output + gradle cache) is cheap to regenerate on its own,
+# so it stays a separate, lighter target - run standalone via `make clean`.
+docker-clean: clean
+	docker-compose exec -T $(CONTAINER_NAME) find /opt/flutter -mindepth 1 -delete
+	docker-compose down --rmi local -v
+	rm -f .docker-build-stamp
