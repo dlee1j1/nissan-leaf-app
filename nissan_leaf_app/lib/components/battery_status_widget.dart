@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import '../data/reading_model.dart' show lowBattery12vThresholdVolts;
 
 class BatteryStatusWidget extends StatelessWidget {
   final double stateOfCharge;
   final double batteryHealth;
   final double? estimatedRange;
+  final double? bat12vVoltage;
   final DateTime? lastUpdated;
   final bool isLoading;
   final VoidCallback? onRefresh;
@@ -18,10 +20,14 @@ class BatteryStatusWidget extends StatelessWidget {
     required this.stateOfCharge,
     required this.batteryHealth,
     this.estimatedRange,
+    this.bat12vVoltage,
     this.lastUpdated,
     this.isLoading = false,
     this.onRefresh,
   });
+
+  bool get _bat12vLow =>
+      bat12vVoltage != null && bat12vVoltage! < lowBattery12vThresholdVolts;
 
   @override
   Widget build(BuildContext context) {
@@ -87,11 +93,45 @@ class BatteryStatusWidget extends StatelessWidget {
                           Colors.blue,
                         ),
                       ],
+                      if (bat12vVoltage != null) ...[
+                        const SizedBox(height: 12),
+                        _buildStatusRow(
+                          '12V Battery',
+                          '${bat12vVoltage!.toStringAsFixed(2)} V',
+                          Icons.battery_alert,
+                          null,
+                          _bat12vLow ? Colors.red : Colors.grey[700]!,
+                        ),
+                      ],
                     ],
                   ),
                 ),
               ],
             ),
+            if (_bat12vLow) ...[
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(8.0),
+                decoration: BoxDecoration(
+                  color: Colors.red[50],
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.red[200]!),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.warning_amber_rounded, color: Colors.red, size: 20),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        '12V battery reading is low (${bat12vVoltage!.toStringAsFixed(2)} V) - '
+                        'it may need replacement soon.',
+                        style: TextStyle(color: Colors.red[800]),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
             if (lastUpdated != null) ...[
               const SizedBox(height: 12),
               Text(

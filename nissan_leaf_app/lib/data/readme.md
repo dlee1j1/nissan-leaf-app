@@ -28,11 +28,13 @@ Defines the `Reading` class that represents a single data point of battery infor
 - `batteryVoltage`: High-voltage battery voltage (volts)
 - `batteryCapacity`: High-voltage battery capacity (Ah)
 - `estimatedRange`: Estimated driving range (km) - known unreliable, see below
-- `speed`, `odometer`, `ambientTemp`, `l1l2Charges`, `quickCharges`: nullable
-  analytics fields. Nullable because the OBD reads behind them are
-  best-effort (`BluetoothDeviceManager.collectCarData()`), so a given
-  reading may be missing some or all of them even on current app versions,
-  not just on rows written before they existed.
+- `speed`, `odometer`, `ambientTemp`, `l1l2Charges`, `quickCharges`,
+  `bat12vVoltage`: nullable analytics fields. Nullable because the OBD reads
+  behind them are best-effort (`BluetoothDeviceManager.collectCarData()`),
+  so a given reading may be missing some or all of them even on current app
+  versions, not just on rows written before they existed. `bat12vVoltage`
+  is the 12V aux/starter battery, not the HV pack - see
+  `nissan_leaf_app/lib/obd/readme.md` for its decode provenance.
 
 The model provides several factory methods:
 - `Reading.fromMap()`: Create from a database record
@@ -106,13 +108,15 @@ CREATE TABLE readings(
   odometer INTEGER,
   ambientTemp REAL,
   l1l2Charges INTEGER,
-  quickCharges INTEGER
+  quickCharges INTEGER,
+  bat12vVoltage REAL
 )
 ```
 
-The five analytics columns were added in schema version 2 via `onUpgrade`
-in `readings_db.dart` - see "Extending the Data Model" below for the
-pattern, now exercised for real rather than just described.
+The five original analytics columns were added in schema version 2 via
+`onUpgrade` in `readings_db.dart`; `bat12vVoltage` followed in version 3 -
+see "Extending the Data Model" below for the pattern, now exercised for real
+rather than just described.
 
 ### `estimatedRange` is not populated
 

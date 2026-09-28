@@ -50,6 +50,14 @@ abstract class DataOrchestrator {
   /// after the fact, to a healthy one. See the "connects but nothing shows
   /// up in Home Assistant" report this was added to diagnose.
   String? get lastMqttStatus;
+
+  /// The 12V aux battery voltage from the most recent successful
+  /// [collectData] cycle, or null if that cycle's OBD read for it wasn't
+  /// available (best-effort - see [Reading.bat12vVoltage]) or no cycle has
+  /// succeeded yet. Surfaced so the background service's persistent
+  /// notification and the dashboard can flag a possibly-failing 12V battery
+  /// without each needing their own database round trip.
+  double? get lastBat12vVoltage;
 }
 
 /// Orchestrator that connects directly to OBD (Debug Mode)
@@ -61,6 +69,7 @@ class DirectOBDOrchestrator implements DataOrchestrator {
   final _log = SimpleLogger();
   var _initialized = false;
   String? _lastMqttStatus;
+  double? _lastBat12vVoltage;
 
   Future<void> _initialize() async {
     if (_initialized) return;
@@ -93,6 +102,9 @@ class DirectOBDOrchestrator implements DataOrchestrator {
   @override
   String? get lastMqttStatus => _lastMqttStatus;
 
+  @override
+  double? get lastBat12vVoltage => _lastBat12vVoltage;
+
   final SingleFlight<bool> _collectGuard = SingleFlight<bool>();
   @override
   Future<bool> collectData() {
@@ -119,6 +131,7 @@ class DirectOBDOrchestrator implements DataOrchestrator {
       final reading = Reading.fromObdMap(data);
       await _db.insertReading(reading);
       _log.info('Saved reading to database');
+      _lastBat12vVoltage = reading.bat12vVoltage;
 
       // Generate a unique session ID
       final sessionId = await _getOrCreateSessionId();
@@ -153,6 +166,7 @@ class DirectOBDOrchestrator implements DataOrchestrator {
             ambientTemp: reading.ambientTemp,
             l1l2Charges: reading.l1l2Charges,
             quickCharges: reading.quickCharges,
+            bat12vVoltage: reading.bat12vVoltage,
           );
           _lastMqttStatus =
               published ? 'ok' : 'failed: ${_mqttClient.lastError ?? "unknown error"}';
@@ -243,6 +257,7 @@ class BackgroundServiceOrchestrator implements DataOrchestrator {
   final ReadingsDatabase _db;
   final _log = SimpleLogger();
   String? _lastFailureReason;
+  double? _lastBat12vVoltage;
 
   // Best-effort, cached from the last status/refresh reply - this isolate
   // can't synchronously ask another one whether the dongle is connected
@@ -290,6 +305,9 @@ class BackgroundServiceOrchestrator implements DataOrchestrator {
   String? get lastMqttStatus => null;
 
   @override
+  double? get lastBat12vVoltage => _lastBat12vVoltage;
+
+  @override
   Future<void> refreshStatus() async {
     if (!await _isServiceRunning()) {
       _connected = false;
@@ -329,6 +347,7 @@ class BackgroundServiceOrchestrator implements DataOrchestrator {
       _statusController.add({'collecting': false, 'error': _lastFailureReason});
       return false;
     }
+    _lastBat12vVoltage = reading.bat12vVoltage;
 
     _statusController.add({
       'collecting': false,
@@ -453,6 +472,9 @@ class MockDataOrchestrator implements DataOrchestrator {
 
   @override
   String? get lastMqttStatus => null; // mock data collection never touches MQTT
+
+  @override
+  double? get lastBat12vVoltage => null; // mock data has no 12V PID to simulate
 
   @override
   Future<void> refreshStatus() async {}

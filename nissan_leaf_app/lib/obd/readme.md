@@ -176,6 +176,16 @@ README under "What about active CAN-polling?". That repo's own DBC files
 (broadcast CAN, a different addressing scheme) independently corroborate
 at least the `ambientTemp` scale factor.
 
+**`battery12v` (12V aux battery voltage, `bat_12v_voltage`)**: also
+confirmed live (2026-09) - reads ~14V with the car on right after a 12V
+battery replacement, matching the expected DC-DC-converter-charging range
+(13.8-14.5V). Community sources (My Nissan Leaf Forum threads on reading
+12V voltage via `22 1103`/header `797`) independently document the same
+command/header with a `data[4] * 0.08` formula, one array index off from
+this codebase's `data[3] * 0.08` - consistent with this codebase indexing
+its response bytes differently elsewhere, and now cross-checked against
+the real reading rather than just the community formula.
+
 **Everything else in the registry**: unverified. Copied from
 [pbutterworth/py-nissan-leaf-obd-ble](https://github.com/pbutterworth/py-nissan-leaf-obd-ble)
 (itself the likely origin of the Feb 2025 bulk copy here), which is a

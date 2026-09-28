@@ -599,6 +599,7 @@ void main() {
         if (cmd == OBDCommand.ambientTemp) return {'ambient_temp': 21.5};
         if (cmd == OBDCommand.l1l2Charges) return {'l1_l2_charges': 587};
         if (cmd == OBDCommand.quickCharges) return {'quick_charges': 11};
+        if (cmd == OBDCommand.battery12v) return {'bat_12v_voltage': 12.64};
         return {'raw_response': 'ok'}; // e.g. probe - must be non-empty to connect
       });
 
@@ -610,6 +611,7 @@ void main() {
       expect(result['ambient_temp'], 21.5);
       expect(result['l1_l2_charges'], 587);
       expect(result['quick_charges'], 11);
+      expect(result['bat_12v_voltage'], 12.64);
       // The primary fields must not get displaced by the extra reads.
       expect(result['state_of_charge'], 80);
     });

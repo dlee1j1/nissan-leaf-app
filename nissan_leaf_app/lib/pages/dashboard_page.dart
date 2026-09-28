@@ -577,6 +577,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                 stateOfCharge: _currentReading?.stateOfCharge ?? 0.0,
                 batteryHealth: _currentReading?.batteryHealth ?? 0.0,
                 estimatedRange: _currentReading?.estimatedRange,
+                bat12vVoltage: _currentReading?.bat12vVoltage,
                 lastUpdated: _currentReading?.timestamp,
                 isLoading: _isLoadingCurrent,
                 onRefresh: _refreshCurrentReading,

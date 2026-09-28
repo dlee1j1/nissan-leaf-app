@@ -142,6 +142,7 @@ void main() {
           ambientTemp: 21.5,
           l1l2Charges: 588,
           quickCharges: 11,
+          bat12vVoltage: 12.64,
         );
 
         final converted = Reading.fromMap(original.toMap());
@@ -151,6 +152,7 @@ void main() {
         expect(converted.ambientTemp, 21.5);
         expect(converted.l1l2Charges, 588);
         expect(converted.quickCharges, 11);
+        expect(converted.bat12vVoltage, 12.64);
       });
 
       test('fromObdMap picks them out of the raw OBD map when present', () {
@@ -165,6 +167,7 @@ void main() {
           'ambient_temp': 21.5,
           'l1_l2_charges': 588,
           'quick_charges': 11,
+          'bat_12v_voltage': 12.64,
         });
 
         expect(reading.speed, 42.0);
@@ -172,6 +175,7 @@ void main() {
         expect(reading.ambientTemp, 21.5);
         expect(reading.l1l2Charges, 588);
         expect(reading.quickCharges, 11);
+        expect(reading.bat12vVoltage, 12.64);
       });
 
       test('fromObdMap leaves them null when absent (best-effort reads)', () {
@@ -188,6 +192,7 @@ void main() {
         expect(reading.ambientTemp, isNull);
         expect(reading.l1l2Charges, isNull);
         expect(reading.quickCharges, isNull);
+        expect(reading.bat12vVoltage, isNull);
       });
 
       test('copyWith updates analytics fields independently', () {

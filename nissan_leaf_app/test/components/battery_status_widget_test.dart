@@ -107,6 +107,60 @@ void main() {
       expect(find.byIcon(Icons.refresh), findsNothing);
     });
 
+    testWidgets('shows 12V battery voltage when provided', (WidgetTester tester) async {
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: BatteryStatusWidget(
+              stateOfCharge: 75.0,
+              batteryHealth: 90.0,
+              bat12vVoltage: 12.64,
+            ),
+          ),
+        ),
+      );
+
+      expect(find.text('12V Battery'), findsOneWidget);
+      expect(find.text('12.64 V'), findsOneWidget);
+      // Healthy voltage - no warning banner.
+      expect(find.textContaining('may need replacement soon'), findsNothing);
+    });
+
+    testWidgets('shows a low-voltage warning when 12V battery is below threshold',
+        (WidgetTester tester) async {
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: BatteryStatusWidget(
+              stateOfCharge: 75.0,
+              batteryHealth: 90.0,
+              bat12vVoltage: 11.5,
+            ),
+          ),
+        ),
+      );
+
+      expect(find.text('12V Battery'), findsOneWidget);
+      expect(find.text('11.50 V'), findsOneWidget);
+      expect(find.textContaining('may need replacement soon'), findsOneWidget);
+      expect(find.byIcon(Icons.warning_amber_rounded), findsOneWidget);
+    });
+
+    testWidgets('hides 12V battery row when not provided', (WidgetTester tester) async {
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: BatteryStatusWidget(
+              stateOfCharge: 75.0,
+              batteryHealth: 90.0,
+            ),
+          ),
+        ),
+      );
+
+      expect(find.text('12V Battery'), findsNothing);
+    });
+
     testWidgets('battery indicator changes color based on charge level',
         (WidgetTester tester) async {
       // Test with high charge (green)

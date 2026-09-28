@@ -506,6 +506,32 @@ void main() {
             sessionId: any(named: 'sessionId'),
           )).called(1);
     });
+
+    test('lastBat12vVoltage reflects the most recent successful reading', () async {
+      expect(orchestrator.lastBat12vVoltage, isNull);
+
+      final carData = {
+        'state_of_charge': 85,
+        'hv_battery_health': 90,
+        'hv_battery_voltage': 360,
+        'hv_battery_Ah': 56,
+        'range_remaining': 150,
+        'bat_12v_voltage': 11.84,
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      };
+
+      when(() => mockDeviceManager.initialize()).thenAnswer((_) async {});
+      when(() => mockDeviceManager.isConnected).thenReturn(false);
+      when(() => mockDeviceManager.autoConnectToObd()).thenAnswer((_) async => true);
+      when(() => mockDeviceManager.collectCarData()).thenAnswer((_) async => carData);
+      when(() => mockDatabase.insertReading(any())).thenAnswer((_) async => 1);
+      when(() => mockMqttClient.isConnected).thenReturn(false);
+
+      final result = await orchestrator.collectData();
+
+      expect(result, isTrue);
+      expect(orchestrator.lastBat12vVoltage, 11.84);
+    });
   });
 
   group('BackgroundServiceOrchestrator (#20)', () {
@@ -542,6 +568,7 @@ void main() {
           batteryVoltage: 360.0,
           batteryCapacity: 56.0,
           estimatedRange: 150.0,
+          bat12vVoltage: 11.92,
         );
         when(() => mockDb.getMostRecentReading()).thenAnswer((_) async => reading);
         final orchestrator = buildOrchestrator(isRunning: false);
@@ -560,6 +587,7 @@ void main() {
         expect(result, true);
         expect(orchestrator.isConnected, true);
         expect(registeredCallbacks, isEmpty);
+        expect(orchestrator.lastBat12vVoltage, 11.92);
       });
 
       test('fails without waiting for a message if the service fails to start', () async {
