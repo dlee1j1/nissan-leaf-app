@@ -105,6 +105,7 @@ homeassistant/sensor/[clientId]/odometer/config
 homeassistant/sensor/[clientId]/ambient_temp/config
 homeassistant/sensor/[clientId]/l1l2_charges/config
 homeassistant/sensor/[clientId]/quick_charges/config
+homeassistant/sensor/[clientId]/bat_12v_voltage/config
 ```
 
 These messages define:
@@ -151,8 +152,9 @@ The MQTT client publishes to several topics:
    [topicPrefix]/[clientId]/ambient_temp/state     // Ambient temperature, °C
    [topicPrefix]/[clientId]/l1l2_charges/state     // Lifetime L1/L2 charge count
    [topicPrefix]/[clientId]/quick_charges/state    // Lifetime DC quick-charge count
+   [topicPrefix]/[clientId]/bat_12v_voltage/state  // 12V aux battery voltage, V
    ```
-   The last six topics only publish when that cycle's OBD read succeeded -
+   The last seven topics only publish when that cycle's OBD read succeeded -
    the reads behind them are best-effort, unlike SOC/health/voltage/capacity.
    There is no range/state topic - the OBD command behind it was removed
    (see `nissan_leaf_app/lib/data/readme.md`).

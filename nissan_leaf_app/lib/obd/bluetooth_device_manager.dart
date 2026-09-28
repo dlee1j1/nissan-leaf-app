@@ -453,6 +453,7 @@ class BluetoothDeviceManager {
         OBDCommand.ambientTemp,
         OBDCommand.l1l2Charges,
         OBDCommand.quickCharges,
+        OBDCommand.battery12v,
       ]) {
         try {
           extraData.addAll(await cmd.run());

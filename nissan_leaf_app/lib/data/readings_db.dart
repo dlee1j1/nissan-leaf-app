@@ -41,7 +41,7 @@ class ReadingsDatabase {
 
     return await openDatabase(
       path,
-      version: 2,
+      version: 3,
       onCreate: _createDb,
       onUpgrade: _upgradeDb,
     );
@@ -66,7 +66,8 @@ class ReadingsDatabase {
         odometer INTEGER,
         ambientTemp REAL,
         l1l2Charges INTEGER,
-        quickCharges INTEGER
+        quickCharges INTEGER,
+        bat12vVoltage REAL
       )
     ''');
   }
@@ -74,6 +75,8 @@ class ReadingsDatabase {
   // v1 -> v2 (data-pipeline plan, Phase B): analytics fields added
   // alongside the original battery/range columns. All nullable, so existing
   // rows just get NULL for them rather than needing a backfill value.
+  //
+  // v2 -> v3: 12V aux battery voltage, same nullable/best-effort treatment.
   Future<void> _upgradeDb(Database db, int oldVersion, int newVersion) async {
     if (oldVersion < 2) {
       await db.execute('ALTER TABLE readings ADD COLUMN speed REAL');
@@ -81,6 +84,9 @@ class ReadingsDatabase {
       await db.execute('ALTER TABLE readings ADD COLUMN ambientTemp REAL');
       await db.execute('ALTER TABLE readings ADD COLUMN l1l2Charges INTEGER');
       await db.execute('ALTER TABLE readings ADD COLUMN quickCharges INTEGER');
+    }
+    if (oldVersion < 3) {
+      await db.execute('ALTER TABLE readings ADD COLUMN bat12vVoltage REAL');
     }
   }
 

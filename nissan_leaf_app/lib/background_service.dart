@@ -9,6 +9,7 @@ import 'package:meta/meta.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:simple_logger/simple_logger.dart';
+import 'data/reading_model.dart' show lowBattery12vThresholdVolts;
 import 'data_orchestrator.dart';
 
 /// Default poll interval, in minutes.
@@ -164,6 +165,9 @@ class BackgroundService extends TaskHandler implements DataOrchestrator {
   String? get lastMqttStatus => _orchestrator.lastMqttStatus;
 
   @override
+  double? get lastBat12vVoltage => _orchestrator.lastBat12vVoltage;
+
+  @override
   Future<void> refreshStatus() async {} // isConnected is already live here
 
   @override
@@ -280,10 +284,15 @@ class BackgroundService extends TaskHandler implements DataOrchestrator {
     _timer = Timer(_baseInterval, () => execute(TriggerType.timer));
 
     try {
+      var text = 'Collecting every ${_baseInterval.inMinutes} min '
+          '(${_success[_lastTrigger]}/${_tries[_lastTrigger]} ok)';
+      final bat12v = _orchestrator.lastBat12vVoltage;
+      if (bat12v != null && bat12v < lowBattery12vThresholdVolts) {
+        text += ' - ⚠ 12V battery low (${bat12v.toStringAsFixed(1)}V)';
+      }
       FlutterForegroundTask.updateService(
         notificationTitle: 'Nissan Leaf Battery Tracker',
-        notificationText: 'Collecting every ${_baseInterval.inMinutes} min '
-            '(${_success[_lastTrigger]}/${_tries[_lastTrigger]} ok)',
+        notificationText: text,
       );
     } catch (e) {
       _log.warning('Failed to update notification: $e');

@@ -1,3 +1,14 @@
+/// Below this voltage, the 12V aux battery is a plausible candidate for
+/// replacement. The OBD read this checks against happens while the car is
+/// on/ready (the background service only runs while driving or freshly
+/// connected), when a healthy DC-DC converter should be holding the aux
+/// battery closer to 13.8-14.5V - so a reading down at a resting-battery
+/// figure like this while the car is supposedly charging it is already a
+/// meaningful warning sign, not just a borderline resting reading. Kept
+/// deliberately conservative (favoring fewer false positives) - see
+/// nissan_leaf_app/lib/obd/readme.md for the decode formula's confirmation.
+const double lowBattery12vThresholdVolts = 12.0;
+
 class Reading {
   final int? id; // Nullable for new entries
   final DateTime timestamp;
@@ -17,6 +28,11 @@ class Reading {
   final int? l1l2Charges;
   final int? quickCharges;
 
+  // 12V aux battery voltage - same best-effort/nullable treatment as the
+  // other analytics fields above. Decode formula confirmed live (2026-09) -
+  // see nissan_leaf_app/lib/obd/readme.md.
+  final double? bat12vVoltage;
+
   Reading({
     this.id,
     required this.timestamp,
@@ -30,6 +46,7 @@ class Reading {
     this.ambientTemp,
     this.l1l2Charges,
     this.quickCharges,
+    this.bat12vVoltage,
   });
 
   // Convert a Reading to a Map for database storage
@@ -47,6 +64,7 @@ class Reading {
       'ambientTemp': ambientTemp,
       'l1l2Charges': l1l2Charges,
       'quickCharges': quickCharges,
+      'bat12vVoltage': bat12vVoltage,
     };
   }
 
@@ -65,6 +83,7 @@ class Reading {
       ambientTemp: (map['ambientTemp'] as num?)?.toDouble(),
       l1l2Charges: (map['l1l2Charges'] as num?)?.toInt(),
       quickCharges: (map['quickCharges'] as num?)?.toInt(),
+      bat12vVoltage: (map['bat12vVoltage'] as num?)?.toDouble(),
     );
   }
 
@@ -93,6 +112,7 @@ class Reading {
       ambientTemp: (odbData['ambient_temp'] as num?)?.toDouble(),
       l1l2Charges: (odbData['l1_l2_charges'] as num?)?.toInt(),
       quickCharges: (odbData['quick_charges'] as num?)?.toInt(),
+      bat12vVoltage: (odbData['bat_12v_voltage'] as num?)?.toDouble(),
     );
   }
 
@@ -110,6 +130,7 @@ class Reading {
     double? ambientTemp,
     int? l1l2Charges,
     int? quickCharges,
+    double? bat12vVoltage,
   }) {
     return Reading(
       id: id ?? this.id,
@@ -124,6 +145,7 @@ class Reading {
       ambientTemp: ambientTemp ?? this.ambientTemp,
       l1l2Charges: l1l2Charges ?? this.l1l2Charges,
       quickCharges: quickCharges ?? this.quickCharges,
+      bat12vVoltage: bat12vVoltage ?? this.bat12vVoltage,
     );
   }
 }

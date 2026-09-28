@@ -312,5 +312,75 @@ void main() {
         await tempDir.delete(recursive: true);
       }
     });
+
+    // v2 -> v3: 12V aux battery voltage column added.
+    test('v2 -> v3 migration adds bat12vVoltage column without losing existing rows', () async {
+      final tempDir = await Directory.systemTemp.createTemp('readings_db_migration_test');
+      final dbPath = '${tempDir.path}/readings.db';
+
+      try {
+        // Create a v2 database by hand, matching the pre-bat12vVoltage schema.
+        final v2Db = await databaseFactory.openDatabase(
+          dbPath,
+          options: OpenDatabaseOptions(
+            version: 2,
+            onCreate: (db, version) => db.execute('''
+              CREATE TABLE readings(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp INTEGER NOT NULL,
+                stateOfCharge REAL NOT NULL,
+                batteryHealth REAL NOT NULL,
+                batteryVoltage REAL NOT NULL,
+                batteryCapacity REAL NOT NULL,
+                estimatedRange REAL NOT NULL,
+                speed REAL,
+                odometer INTEGER,
+                ambientTemp REAL,
+                l1l2Charges INTEGER,
+                quickCharges INTEGER
+              )
+            '''),
+          ),
+        );
+        final preMigrationTimestamp = DateTime.now().millisecondsSinceEpoch;
+        await v2Db.insert('readings', {
+          'timestamp': preMigrationTimestamp,
+          'stateOfCharge': 80.0,
+          'batteryHealth': 90.0,
+          'batteryVoltage': 360.0,
+          'batteryCapacity': 56.0,
+          'estimatedRange': 150.0,
+        });
+        await v2Db.close();
+
+        // Reopen through the real app path - triggers onUpgrade to v3.
+        await ReadingsDatabase.reset();
+        final migratedDb = ReadingsDatabase(databasePath: dbPath);
+        await migratedDb.database;
+
+        // The pre-migration row survives, with null for the new column.
+        final all = await migratedDb.getReadingsFromLastDays(1);
+        expect(all.length, 1);
+        expect(all.first.stateOfCharge, 80.0);
+        expect(all.first.bat12vVoltage, isNull);
+
+        // A fresh insert can now populate the new column.
+        await migratedDb.insertReading(Reading(
+          timestamp: DateTime.now(),
+          stateOfCharge: 82.0,
+          batteryHealth: 90.0,
+          batteryVoltage: 360.0,
+          batteryCapacity: 56.0,
+          estimatedRange: 155.0,
+          bat12vVoltage: 12.64,
+        ));
+
+        final afterInsert = await migratedDb.getMostRecentReading();
+        expect(afterInsert!.bat12vVoltage, 12.64);
+      } finally {
+        await ReadingsDatabase.reset();
+        await tempDir.delete(recursive: true);
+      }
+    });
   });
 }

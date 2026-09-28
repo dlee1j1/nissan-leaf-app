@@ -126,6 +126,7 @@ void main() {
                 ambientTemp: 21.5,
                 l1l2Charges: 588,
                 quickCharges: 11,
+                bat12vVoltage: 12.64,
               ),
           returnsNormally);
     });

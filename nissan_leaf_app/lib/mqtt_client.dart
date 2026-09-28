@@ -116,6 +116,7 @@ class MqttClient {
     double? ambientTemp,
     int? l1l2Charges,
     int? quickCharges,
+    double? bat12vVoltage,
   }) async {
     if (AppState.instance.mockMode) {
       _log.info('MOCK MQTT PUBLISH BATTERY DATA - '
@@ -141,6 +142,7 @@ class MqttClient {
       if (ambientTemp != null) data['ambient_temp'] = ambientTemp;
       if (l1l2Charges != null) data['l1l2_charges'] = l1l2Charges;
       if (quickCharges != null) data['quick_charges'] = quickCharges;
+      if (bat12vVoltage != null) data['bat_12v_voltage'] = bat12vVoltage;
 
       // Individual publishes are best-effort (one bad topic shouldn't lose
       // the rest), but every failure lands here - collected rather than
@@ -174,6 +176,10 @@ class MqttClient {
       if (quickCharges != null) {
         _publish(client, settings, settings.getStateTopic('quick_charges'),
             quickCharges.toString(), failedTopics);
+      }
+      if (bat12vVoltage != null) {
+        _publish(client, settings, settings.getStateTopic('bat_12v_voltage'),
+            bat12vVoltage.toString(), failedTopics);
       }
 
       final fullDataTopic = '${settings.topicPrefix}/${settings.clientId}/data';
@@ -404,6 +410,13 @@ class MqttClient {
           'name': 'Nissan Leaf Quick Charges',
           'state_class': 'total_increasing',
           'icon': 'mdi:ev-station',
+        },
+        'bat_12v_voltage': {
+          'name': 'Nissan Leaf 12V Battery Voltage',
+          'device_class': 'voltage',
+          'state_class': 'measurement',
+          'unit_of_measurement': 'V',
+          'icon': 'mdi:car-battery',
         },
       };
 
