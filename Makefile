@@ -1,4 +1,4 @@
-.PHONY: docker-build docker-shell docker-restart docker-stop docker-adb docker-clean
+.PHONY: docker-build docker-shell docker-restart docker-stop docker-adb docker-clean clean fstrim-mac
 CONTAINER_NAME=flutter_dev
 
 # Most targets run inside the container so run docker-compose and exec to run make inside if not in the container
@@ -169,6 +169,18 @@ docker-restart: docker-stop docker-shell
 docker-stop:
 	docker-compose down
 
+# Deleting files inside the Colima VM only punches holes in its virtual
+# disk - macOS doesn't reclaim that space until the VM's filesystem is
+# TRIM'd. Mac/Colima only; no-ops silently elsewhere (Docker Desktop, WSL).
+fstrim-mac:
+	@command -v colima >/dev/null 2>&1 && colima ssh -- sudo fstrim -a || true
+
+# Explicit host-side override of the %: catch-all: forwards into the
+# container exactly as before, then reclaims the freed space on the Mac.
+clean:
+	docker-compose up -d && docker-compose exec -T $(CONTAINER_NAME) make clean
+	$(MAKE) fstrim-mac
+
 # Deep clean: reclaims everything `make setup` and the docker build produce
 # (Flutter SDK clone, Android SDK, gradle cache, the built image itself) -
 # for parking the project when you won't be building for a while. Recovery
@@ -180,3 +192,4 @@ docker-clean: clean
 	docker-compose exec -T $(CONTAINER_NAME) find /opt/flutter -mindepth 1 -delete
 	docker-compose down --rmi local -v
 	rm -f .docker-build-stamp
+	$(MAKE) fstrim-mac
